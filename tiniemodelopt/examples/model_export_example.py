@@ -61,7 +61,8 @@ total_epochs = 10
 
 # quantize with edgeai_torchmodelopt wrapper
 # qconfig_type = edgeai_torchmodelopt.xmodelopt.quantization.v2.qconfig.QConfigType.WC8SYMP2_AT8SYMP2
-qconfig_type = dict(weight_bitwidth=8, activation_bitwidth=8, weight_per_channel=True, activation_symmetric=True, weight_power2_scale=True, activation_power2_scale=True, activation_range_max=None, activation_fixed_range=False)
+qconfig_type = dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
+                    activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric, power2_scale=True, range_max=None, fixed_range=False))
 prepared_model = edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule(example_model, qconfig_type=qconfig_type, total_epochs=total_epochs)
 
 # here we use Post-Training-Quantization (PTQ), but we can use QAT as well.
@@ -71,7 +72,9 @@ for it in range(total_epochs):
 
 torch.onnx.export(prepared_model, example_input, 'example_model_fakeq.onnx', opset_version=opset_version)
 
-quantized_model = prepared_model.convert() #convert_custom_config=model_export_torch_utils.get_convert_custom_config(replace_input_norm=True))
+#convert_custom_config=model_export_torch_utils.get_convert_custom_config(replace_input_norm=True))
+backend_config = torch.ao.quantization.backend_config.get_native_backend_config()
+quantized_model = prepared_model.convert(backend_config=backend_config)
 torch.onnx.export(quantized_model, example_input, 'example_model_qdq.onnx', opset_version=opset_version)
 
 
