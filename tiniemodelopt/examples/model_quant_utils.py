@@ -59,16 +59,50 @@ class OffsetScaleShift(torch.nn.Module):
         return y
 
     @staticmethod
+    def from_fq(fq_module1):
+        fq_observed1 = fq_module1.activation_post_process
+        scale, zero_point = fq_observed1.calculate_qparams()
+        device = scale.device
+        oss_offset = torch.tensor(0.0,device=device)
+        oss_scale = torch.tensor(1.0,device=device)
+        oss_shift = torch.tensor(1.0,device=device)
+        oss_module = OffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
+        return oss_module
+
+    @staticmethod
     def from_fq_bn_fq(fq_module1, bn_module, fq_module2):
         fq_observed1 = fq_module1.activation_post_process
         scale, zero_point = fq_observed1.calculate_qparams()
+        device = scale.device
         fq_observed2 = fq_module1.activation_post_process
         scale, zero_point = fq_observed2.calculate_qparams()
-        return torch.nn.Identity()
+        oss_offset = torch.tensor(0.0,device=device)
+        oss_scale = torch.tensor(1.0,device=device)
+        oss_shift = torch.tensor(1.0,device=device)
+        oss_module = OffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
+        return oss_module
 
     @staticmethod
-    def from_cbn_fq(cbn_module, fq_module):
-        fq_observed = fq_module.activation_post_process
-        scale, zero_point = fq_observed.calculate_qparams()
-        return torch.nn.Identity()
+    def from_conv_relu_fq(conv_relu_module, fq_module):
+        conv_module = conv_relu_module[0]
+        weight_scale = conv_module.weight_scale
+        weight_zero_point = conv_module.weight_zero_point
+        device = weight_scale.device
+        conv_int_in_float = torch.nn.Conv2d(conv_module.in_channels, conv_module.out_channels, conv_module.kernel_size)
+        oss_module = __class__.from_fq(fq_module)
+        relu_module = torch.nn.ReLU()
+        return torch.nn.Sequential(conv_int_in_float, oss_module, relu_module)
+
+    # @staticmethod
+    # def from_cbn_fq(cbn_module):
+    #     fq_observed = fq_module.activation_post_process
+    #     scale, zero_point = fq_observed.calculate_qparams()
+    #     device = scale.device
+    #     oss_offset = torch.tensor(0.0,device=device)
+    #     oss_scale = torch.tensor(0.0,device=device)
+    #     oss_shift = torch.tensor(0.0,device=device)
+    #     conv_module = cbn_module.to_float()
+    #     conv_module = torch.nn.Conv2d()
+    #     return conv_module
+
 

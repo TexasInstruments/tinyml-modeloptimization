@@ -1,6 +1,11 @@
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Type, Callable
+
 import numpy as np
 import torch
+from torch.ao.quantization.fx.custom_config import (ConvertCustomConfig, PrepareCustomConfig,)
+
 import model_quant_utils
+
 
 #######################################################################################
 opset_version = 17
@@ -12,17 +17,21 @@ class ExampleModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.bn0 = torch.nn.BatchNorm2d(3)
-        # self.bn0.with_convert_custom_config = True
-
         self.conv1 = torch.nn.Conv2d(3,8,3, bias=False)
         self.bn1 = torch.nn.BatchNorm2d(8)
         self.relu1 = torch.nn.ReLU()
+        # self.conv2 = torch.nn.Conv2d(8,8,3, bias=False)
+        # self.bn2 = torch.nn.BatchNorm2d(8)
+        # self.relu2 = torch.nn.ReLU()
 
     def forward(self, x):
         x = self.bn0(x)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu1(x)
+        # x = self.conv2(x)
+        # x = self.bn2(x)
+        # x = self.relu2(x)
         return x
 
 
@@ -75,30 +84,42 @@ for it in range(total_epochs):
 torch.onnx.export(prepared_model, example_input, 'example_model_fakeq.onnx', opset_version=opset_version)
 
 
-##################################################################################
-# TODO: remove
-# native pytorch int8 quantization
-# convert_custom_config = model_export_torch_utils.get_convert_custom_config()
-# backend_config = torch.ao.quantization.backend_config.get_native_backend_config()
+# ##################################################################################
+# # TODO: remove thse lines - not needed
+# # native pytorch int8 quantization
+# # convert_custom_config = model_export_torch_utils.get_convert_custom_config()
+# # backend_config = torch.ao.quantization.backend_config.get_native_backend_config()
 # quantized_model = prepared_model.convert()
 # try:
 #     torch.onnx.export(quantized_model, example_input, 'example_model_qdq.onnx', opset_version=opset_version)
 # except:
 #     print('ERROR: converted qdq model could not be exported to onnx')
-
-##################################################################################
-# # Convert QDQ format to Int8 format
+# ##################################################################################
+# # # Convert QDQ format to Int8 format
 # import onnxruntime as ort
 # so = ort.SessionOptions()
 # so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-# so.optimized_model_filepath = 'example_model_int.onnx'
+# so.optimized_model_filepath = 'example_model_int8.onnx'
 # # logger.info("Inplace conversion of QDQ model to INT8 model at: {}".format(onnx_file))
 # ort.InferenceSession('example_model_qdq.onnx', so)
+# ##################################################################################
 
 
 ##################################################################################
 def quantize_replacement_function(model, pattern, *args, **kwargs):
     model = torch.fx.symbolic_trace(model) if not isinstance(model, torch.fx.GraphModule) else model
+
+    named_modules = dict(model.named_modules(remove_duplicate=False))
+
+    observed_graph_module_attrs = model.meta["_observed_graph_module_attrs"]
+    node_name_to_scope: Dict[str, Tuple[str, type]] = observed_graph_module_attrs.node_name_to_scope
+    prepare_custom_config: PrepareCustomConfig = observed_graph_module_attrs.prepare_custom_config
+    observed_node_names: Set[str] = observed_graph_module_attrs.observed_node_names
+    node_name_to_qconfig: Dict[str, QConfigAny] = observed_graph_module_attrs.node_name_to_qconfig  # type: ignore[assignment]
+    backend_config = torch.ao.quantization.backend_config.get_native_backend_config()
+    is_decomposed = False
+    is_reference = False
+    remove_qconfig = True
 
     # replace BN
     pattern_list = [edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
@@ -112,15 +133,44 @@ def quantize_replacement_function(model, pattern, *args, **kwargs):
     #
 
     # replace torch.ao.nn.intrinsic.qat.ConvBnReLU2d
-    pattern_list = [torch.ao.nn.intrinsic.qat.ConvBnReLU2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
+    pattern_list = [torch.ao.nn.intrinsic.qat.ConvBnReLU2d]
     matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
     for no_of_module_replaced, (start, end) in enumerate(matches):
-        cbn_module = dict(model.named_modules())[start.target]
+        # cbn_module = dict(model.named_modules())[start.target]
+        # fq_module = dict(model.named_modules())[end.target]
+        # new_fq_module = model_quant_utils.OffsetScaleShift.from_cbn_fq(cbn_module, fq_module)
+        # edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
+        from torch.ao.quantization.fx.convert import convert_weighted_module
+        convert_weighted_module(start, named_modules, observed_node_names, node_name_to_qconfig, backend_config, is_decomposed, is_reference)
+    #
+
+    # torch.ao.nn.intrinsic.modules.fused.ConvReLU2d
+    pattern_list = [torch.ao.nn.intrinsic.modules.fused.ConvReLU2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
+    matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
+    for no_of_module_replaced, (start, end) in enumerate(matches):
+        qconv_module = dict(model.named_modules())[start.target]
         fq_module = dict(model.named_modules())[end.target]
-        new_fq_module = model_quant_utils.OffsetScaleShift.from_cbn_fq(cbn_module, fq_module)
+        new_fq_module = model_quant_utils.OffsetScaleShift.from_conv_relu_fq(qconv_module, fq_module)
         edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
     #
 
+    # # replace FQ
+    pattern_list = [edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
+    matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
+    for no_of_module_replaced, (start, end) in enumerate(matches):
+        fq_module1 = dict(model.named_modules())[start.target]
+        new_fq_module = model_quant_utils.OffsetScaleShift.from_fq(fq_module1)
+        edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
+    #
+
+    from torch.ao.quantization.quantize import (_remove_qconfig,)
+    model.graph.eliminate_dead_code()
+    model = torch.fx.GraphModule(model, model.graph)
+    if remove_qconfig:
+        _remove_qconfig(model)
+    #
+    model.delete_all_unused_submodules()
+    model.meta.pop("_observed_graph_module_attrs", None)
     return model
 
 replacement_dict = {
@@ -129,7 +179,7 @@ replacement_dict = {
 prepared_model.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(prepared_model.module, replacement_dict)
 
 ##################################################################################
-try:
-    torch.onnx.export(prepared_model, example_input, 'example_model_tinie.onnx', opset_version=opset_version)
-except:
-    print('ERROR: converted qdq tinie model could not be exported to onnx')
+#try:
+torch.onnx.export(prepared_model, example_input, 'example_model_tinie.onnx', opset_version=opset_version)
+#except:
+#    print('ERROR: converted tinie model could not be exported to onnx')
