@@ -30,6 +30,10 @@
 
 ######################################################################
 # Installing dependencies
+#################################################################################
+# upgrade pip
+pip install --no-input --upgrade pip setuptools
+
 #echo 'installing pytorch...'
 #pip3 install --no-input torch torchvision torchaudio
 echo 'installing the pytorch model optimization toolkit...'

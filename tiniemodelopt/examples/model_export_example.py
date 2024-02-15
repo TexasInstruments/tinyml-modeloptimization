@@ -4,6 +4,9 @@ import numpy as np
 import torch
 from torch.ao.quantization.fx.custom_config import (ConvertCustomConfig, PrepareCustomConfig,)
 
+import onnx
+from onnxsim import simplify
+
 import model_quant_utils
 
 
@@ -106,72 +109,39 @@ torch.onnx.export(prepared_model, example_input, 'example_model_fakeq.onnx', ops
 
 
 ##################################################################################
-def quantize_replacement_function(model, pattern, *args, **kwargs):
+prepared_model = prepared_model.convert()
+
+
+##################################################################################
+def quantize_replacement_function(model, pattern, *args, remove_qconfig=True, **kwargs):
+
     model = torch.fx.symbolic_trace(model) if not isinstance(model, torch.fx.GraphModule) else model
 
-    named_modules = dict(model.named_modules(remove_duplicate=False))
+    # for qdq model
+    # replacement_entries_qdq = [
+    #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_conv_relu_fq),
+    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq_bn_fq),
+    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq),
+    # }
+    
+    # for converted model
+    replacement_entries_converted = [
+        ([torch.quantize_per_tensor], model_quant_utils.OffsetScaleShift.from_q),
+        ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], model_quant_utils.OffsetScaleShift.from_qbn),
+        ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], model_quant_utils.OffsetScaleShift.from_qconvrelu),
+        (['dequantize'], model_quant_utils.OffsetScaleShift.from_dq)
+    ]
 
-    observed_graph_module_attrs = model.meta["_observed_graph_module_attrs"]
-    node_name_to_scope: Dict[str, Tuple[str, type]] = observed_graph_module_attrs.node_name_to_scope
-    prepare_custom_config: PrepareCustomConfig = observed_graph_module_attrs.prepare_custom_config
-    observed_node_names: Set[str] = observed_graph_module_attrs.observed_node_names
-    node_name_to_qconfig: Dict[str, QConfigAny] = observed_graph_module_attrs.node_name_to_qconfig  # type: ignore[assignment]
-    backend_config = torch.ao.quantization.backend_config.get_native_backend_config()
-    is_decomposed = False
-    is_reference = False
-    remove_qconfig = True
-
-    # replace BN
-    pattern_list = [edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
-    matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
-    for no_of_module_replaced, (start, end) in enumerate(matches):
-        fq_module1 = dict(model.named_modules())[start.target]
-        bn_module = dict(model.named_modules())[start.next.target]
-        fq_module2 = dict(model.named_modules())[end.target]
-        new_fq_module = model_quant_utils.OffsetScaleShift.from_fq_bn_fq(fq_module1, bn_module, fq_module2)
-        edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
+    for replacement_pattern, replacement_function in replacement_entries_converted:
+        matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, replacement_pattern)
+        for no_of_module_replaced, (start, end) in enumerate(matches):
+            new_fq_module = replacement_function(model, start, end)
+            edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
+        #
     #
 
-    # replace torch.ao.nn.intrinsic.qat.ConvBnReLU2d
-    pattern_list = [torch.ao.nn.intrinsic.qat.ConvBnReLU2d]
-    matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
-    for no_of_module_replaced, (start, end) in enumerate(matches):
-        # cbn_module = dict(model.named_modules())[start.target]
-        # fq_module = dict(model.named_modules())[end.target]
-        # new_fq_module = model_quant_utils.OffsetScaleShift.from_cbn_fq(cbn_module, fq_module)
-        # edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
-        from torch.ao.quantization.fx.convert import convert_weighted_module
-        convert_weighted_module(start, named_modules, observed_node_names, node_name_to_qconfig, backend_config, is_decomposed, is_reference)
-    #
-
-    # torch.ao.nn.intrinsic.modules.fused.ConvReLU2d
-    pattern_list = [torch.ao.nn.intrinsic.modules.fused.ConvReLU2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
-    matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
-    for no_of_module_replaced, (start, end) in enumerate(matches):
-        qconv_module = dict(model.named_modules())[start.target]
-        fq_module = dict(model.named_modules())[end.target]
-        new_fq_module = model_quant_utils.OffsetScaleShift.from_conv_relu_fq(qconv_module, fq_module)
-        edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
-    #
-
-    # # replace FQ
-    pattern_list = [edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize]
-    matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model, pattern_list)
-    for no_of_module_replaced, (start, end) in enumerate(matches):
-        fq_module1 = dict(model.named_modules())[start.target]
-        new_fq_module = model_quant_utils.OffsetScaleShift.from_fq(fq_module1)
-        edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module, no_of_module_replaced)
-    #
-
-    from torch.ao.quantization.quantize import (_remove_qconfig,)
-    model.graph.eliminate_dead_code()
-    model = torch.fx.GraphModule(model, model.graph)
-    if remove_qconfig:
-        _remove_qconfig(model)
-    #
-    model.delete_all_unused_submodules()
-    model.meta.pop("_observed_graph_module_attrs", None)
     return model
+
 
 replacement_dict = {
     'replace_types1': quantize_replacement_function
@@ -179,7 +149,10 @@ replacement_dict = {
 prepared_model.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(prepared_model.module, replacement_dict)
 
 ##################################################################################
-#try:
-torch.onnx.export(prepared_model, example_input, 'example_model_tinie.onnx', opset_version=opset_version)
-#except:
-#    print('ERROR: converted tinie model could not be exported to onnx')
+tinie_onnx_file = 'example_model_tinie.onnx'
+torch.onnx.export(prepared_model, example_input, tinie_onnx_file, opset_version=opset_version)
+
+# simplify
+prepared_model_onnx = onnx.load(tinie_onnx_file)
+prepared_model_onnx, check = simplify(prepared_model_onnx, skipped_optimizers=['fuse_add_bias_into_conv'])
+onnx.save(prepared_model_onnx, tinie_onnx_file)
