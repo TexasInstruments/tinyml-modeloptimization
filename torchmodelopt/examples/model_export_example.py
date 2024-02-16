@@ -123,7 +123,7 @@ def quantize_replacement_function(model, pattern, *args, remove_qconfig=True, **
     #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq_bn_fq),
     #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq),
     # }
-    
+
     # for converted model
     replacement_entries_converted = [
         ([torch.quantize_per_tensor], model_quant_utils.OffsetScaleShift.from_q),

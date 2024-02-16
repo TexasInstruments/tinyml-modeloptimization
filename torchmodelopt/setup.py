@@ -75,13 +75,13 @@ def main():
         long_description = readme.read()
 
     setup(
-        name='edgeai_torchmodelopt',
+        name='tinyml_torchmodelopt',
         version=version_str,
-        description='EdgeAI Model Optimization ToolKit For Torch',
+        description='TinyML Model Optimization ToolKit For Torch',
         long_description=long_description,
         long_description_content_type='text/markdown',
-        url='https://bitbucket.itg.ti.com/projects/EDGEAI-ALGO/repos/edgeai-modeloptimization/browse',
-        author='EdgeAI, TIDL & Analytics Algo Teams',
+        url='https://bitbucket.itg.ti.com/projects/TINYML-ALGO/repos/tinyml-modeloptimization/browse',
+        author='TinyML, EdgeAI, TIDL & Analytics Algo Teams',
         author_email='edgeai-devkit@list.ti.com',
         classifiers=[
             'Development Status :: 4 - Beta'
@@ -93,7 +93,7 @@ def main():
         include_package_data=True,
         install_requires=requirements,
         project_urls={
-            'Source': 'https://bitbucket.itg.ti.com/projects/EDGEAI-ALGO/repos/edgeai-modeloptimization/browse',
+            'Source': 'https://bitbucket.itg.ti.com/projects/TINYML-ALGO/repos/tinyml-modeloptimization/browse',
             'Bug Reports': 'https://e2e.ti.com/support/processors/f/791/tags/jacinto_2D00_ai_2D00_devkit',
         },
     )
