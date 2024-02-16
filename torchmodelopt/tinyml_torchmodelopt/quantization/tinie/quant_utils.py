@@ -86,6 +86,8 @@ class OffsetScaleShift(torch.nn.Module):
 
     @staticmethod
     def from_qconvrelu(model, start, end):
+        zero_point_offset_for_activation = -128
+
         qconvrelu_module = dict(model.named_modules())[start.target]
         conv_module = torch.nn.Conv2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels, qconvrelu_module.kernel_size, bias=False)
 

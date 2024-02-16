@@ -35,6 +35,7 @@ import edgeai_torchmodelopt
 from edgeai_torchmodelopt.xmodelopt.quantization.v2 import ModelFormat
 from .. import generic
 from . import quant_utils
+from ..common import TinyMLQuantizationVersion
 
 
 class TINIEModelFormat(ModelFormat):
@@ -43,9 +44,6 @@ class TINIEModelFormat(ModelFormat):
 
 
 class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
-    def convert(self, *args, **kwargs):
-        super().convert(*args, **kwargs)
-
     def convert(self, *args, model_format=TINIEModelFormat.TINIE_INT_MODEL, **kwargs):
         self.convert(*args, **kwargs)
         if model_format == TINIEModelFormat.TINIE_INT_MODEL:

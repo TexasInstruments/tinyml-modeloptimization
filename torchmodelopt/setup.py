@@ -66,9 +66,10 @@ def get_version():
 def main():
     version_str = get_version()
 
-    requirements_file = os.path.realpath(os.path.join(os.path.dirname(__file__), 'requirements.txt'))
-    with open(requirements_file) as fp:
-        requirements = fp.read().splitlines()
+    requirements = []
+    # requirements_file = os.path.realpath(os.path.join(os.path.dirname(__file__), 'requirements.txt'))
+    # with open(requirements_file) as fp:
+    #     requirements = fp.read().splitlines()
 
     readme_file = os.path.realpath(os.path.join(os.path.dirname(__file__), 'README.md'))
     with open(readme_file,  encoding="utf8") as readme:

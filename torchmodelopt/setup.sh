@@ -34,6 +34,9 @@
 # upgrade pip
 pip install --no-input --upgrade pip setuptools
 
+echo 'Installing python packages...'
+pip3 install --no-input -r ./requirements.txt
+
 #echo 'installing pytorch...'
 #pip3 install --no-input torch torchvision torchaudio
 echo 'installing the pytorch model optimization toolkit...'

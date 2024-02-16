@@ -29,25 +29,15 @@
 #
 #################################################################################
 
-import copy
-import os.path
+class TinyMLQuantizationVersion():
+    NO_QUANTIZATION = 0
+    QUANTIZATION_GENERIC = 1
+    QUANTIZATION_TINIE = 2
 
-import torch
-import edgeai_torchmodelopt
+    @classmethod
+    def get_dict(cls):
+        return {k:v for k,v in cls.__dict__.items() if not k.startswith("__")}
 
-
-class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
-    def __init__(self, model, qconfig_type=None, total_epochs=None):
-        qconfig_type_in = qconfig_type
-        qconfig_type_default_dict = dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
-                                    activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric,
-                                    power2_scale=True, range_max=None, fixed_range=False))
-        if qconfig_type_in is not None and isinstance(qconfig_type_in, dict):
-            qconfig_type = copy.deepcopy(qconfig_type_default_dict)
-            qconfig_type.update(qconfig_type_in)
-        elif isinstance(qconfig_type_in, str):
-            qconfig_type = qconfig_type_in
-        else:
-            qconfig_type = copy.deepcopy(qconfig_type_default_dict)
-        #
-        super().__init__(model, qconfig_type, total_epochs)
+    @classmethod
+    def get_choices(cls):
+        return {v:k for k,v in cls.__dict__.items() if not k.startswith("__")}

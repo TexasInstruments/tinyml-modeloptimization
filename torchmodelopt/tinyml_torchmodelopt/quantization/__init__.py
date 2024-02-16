@@ -31,19 +31,4 @@
 
 from . import generic
 from . import tinie
-
-
-class QuantizationVersion():
-    NO_QUANTIZATION = 0
-    QUANTIZATION_GENERIC = 1
-    QUANTIZATION_TINIE = 2
-
-    @classmethod
-    def get_dict(cls):
-        return {k:v for k,v in cls.__dict__.items() if not k.startswith("__")}
-
-    @classmethod
-    def get_choices(cls):
-        return {v:k for k,v in cls.__dict__.items() if not k.startswith("__")}
-
-
+from .common import TinyMLQuantizationVersion
