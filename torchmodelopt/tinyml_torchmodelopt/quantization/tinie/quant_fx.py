@@ -69,19 +69,20 @@ class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
         # for converted model
         replacement_entries_converted = [
             ([torch.quantize_per_tensor], quant_utils.OffsetScaleShift.from_q),
+            ([torch.nn.MaxPool2d], quant_utils.OffsetScaleShift.from_maxpool2d),
             ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.OffsetScaleShift.from_qbn),
-            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d],
-             quant_utils.OffsetScaleShift.from_qconvrelu),
+            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.OffsetScaleShift.from_qconvrelu),
+            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.OffsetScaleShift.from_qlinear),
             (['dequantize'], quant_utils.OffsetScaleShift.from_dq)
         ]
 
         for replacement_pattern, replacement_function in replacement_entries_converted:
-            matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(model,
-                                                                                                      replacement_pattern)
+            matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(
+                model, replacement_pattern)
             for no_of_module_replaced, (start, end) in enumerate(matches):
                 new_fq_module = replacement_function(model, start, end)
-                edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(model, start, end, new_fq_module,
-                                                                                    no_of_module_replaced)
+                edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(
+                    model, start, end, new_fq_module, no_of_module_replaced)
             #
         #
         return model

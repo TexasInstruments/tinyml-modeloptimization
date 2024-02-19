@@ -43,7 +43,7 @@ class OffsetScaleShift(torch.nn.Module):
         self.register_buffer('shift', shift)
 
     def extra_repr(self):
-        return 'num_bits_offset={num_bits_offset}, num_bits_scale={num_bits_scale}, num_bits_shift={num_bits_shift}, clip={c_p}'.format(**self.__dict__)
+        return f'offset={self.offset}, scale={self.scale}, shift={self.shift}, clip_n={self.c_n}, clip_p={self.c_p}'
 
     def forward(self, x):
         y = (x + self.offset.reshape(1,-1,1,1))*self.scale.reshape(1,-1,1,1)
@@ -89,7 +89,10 @@ class OffsetScaleShift(torch.nn.Module):
         zero_point_offset_for_activation = -128
 
         qconvrelu_module = dict(model.named_modules())[start.target]
-        conv_module = torch.nn.Conv2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels, qconvrelu_module.kernel_size, bias=False)
+        conv_module = torch.nn.Conv2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels,
+                                      kernel_size=qconvrelu_module.kernel_size, stride=qconvrelu_module.stride,
+                                      padding=qconvrelu_module.padding, dilation=qconvrelu_module.dilation,
+                                      groups=qconvrelu_module.groups, bias=False)
 
         weight = qconvrelu_module.weight()
         per_channel = (weight.qscheme() in (torch.per_channel_symmetric, torch.per_channel_affine))
@@ -122,6 +125,72 @@ class OffsetScaleShift(torch.nn.Module):
         seq_module.scale = qconvrelu_module.scale
         seq_module.zero_point = qconvrelu_module.zero_point
         return seq_module
+
+    @staticmethod
+    def from_qlinear(model, start, end):
+        zero_point_offset_for_activation = -128
+
+        named_modules = dict(model.named_modules())
+
+        qlinear_module = dict(model.named_modules())[start.target]
+        linear_module = torch.nn.Linear(qlinear_module.in_features, qlinear_module.out_features, bias=False)
+
+        weight = qlinear_module.weight()
+        per_channel = (weight.qscheme() in (torch.per_channel_symmetric, torch.per_channel_affine))
+
+        qweight = weight.data.detach().int_repr()
+        linear_module.weight.data.copy_(qweight)
+
+        weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
+        weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
+        # if the previous node is a module, use scale from there.
+        # otherwise we have to go back further.
+        if start.prev.target in named_modules and hasattr(named_modules[start.prev.target], 'scale'):
+            input_scale = named_modules[start.prev.target].scale
+            input_zero_point = named_modules[start.prev.target].zero_point
+        else:
+            prev_node = start.prev
+            prev_module_found = False
+            while not prev_module_found and prev_node:
+                if prev_node.target in named_modules and hasattr(named_modules[prev_node.target], 'scale'):
+                    input_scale = named_modules[prev_node.target].scale
+                    input_zero_point = named_modules[prev_node.target].zero_point
+                    prev_module_found = True
+                #
+                if not prev_module_found:
+                    prev_node = prev_node.prev
+                #
+            #
+        #
+
+        bias_scale = weight_scale * input_scale
+        bias_zero_point = weight_zero_point
+        bias = qlinear_module.bias()
+
+        # qbias = (torch.round(bias / bias_scale) + bias_zero_point).float()
+        if per_channel:
+            qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+        else:
+            qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+        #
+        qbias = qbias.int_repr()
+
+        # conv_module.bias.data.copy_(qbias)
+        oss_shift, oss_scale = compute_shift_scale(torch.tensor(qlinear_module.scale))
+        oss_module = OffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
+
+        seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+        seq_module.scale = qlinear_module.scale
+        seq_module.zero_point = qlinear_module.zero_point
+        return seq_module
+
+    @staticmethod
+    def from_maxpool2d(model, start, end):
+        maxpool2d_module = dict(model.named_modules())[start.target]
+        prev_module = dict(model.named_modules())[start.prev.target]
+        maxpool2d_module.scale = prev_module.scale
+        maxpool2d_module.zero_point = prev_module.zero_point
+        return maxpool2d_module
 
     @staticmethod
     def from_dq(model, start, end):
