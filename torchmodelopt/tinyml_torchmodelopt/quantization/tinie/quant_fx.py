@@ -32,27 +32,21 @@
 import copy
 import torch
 import edgeai_torchmodelopt
-from edgeai_torchmodelopt.xmodelopt.quantization.v2 import ModelFormat
 from .. import generic
 from . import quant_utils
-from ..common import TinyMLQuantizationVersion
-
-
-class TINIEModelFormat(ModelFormat):
-    TINIE_INT_MODEL = ModelFormat._NUM_FORMATS_
-    _NUM_FORMATS_ = ModelFormat._NUM_FORMATS_ + 1
+from ..common import TinyMLQuantizationVersion, ModelFormat, TinyMLModelFormat
 
 
 class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
-    def convert(self, *args, model_format=TINIEModelFormat.TINIE_INT_MODEL, **kwargs):
+    def convert(self, *args, model_format=TinyMLModelFormat.TINIE_INT_MODEL, **kwargs):
         super().convert(*args, **kwargs)
-        if model_format == TINIEModelFormat.TINIE_INT_MODEL:
+        if model_format == TinyMLModelFormat.TINIE_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,
                                     replacement_dict={'replace_types1': self._convert_replacement})
         #
         return self
 
-    def export(self, *args, model_format=TINIEModelFormat.TINIE_INT_MODEL, **kwargs):
+    def export(self, *args, model_format=TinyMLModelFormat.TINIE_INT_MODEL, **kwargs):
         super().export(*args, model_format=model_format, **kwargs)
 
     @staticmethod

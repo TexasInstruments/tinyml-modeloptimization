@@ -3,7 +3,7 @@ import edgeai_torchmodelopt.xmodelopt.quantization.v2.quant_fx_base
 import torch
 
 
-def compute_shift_scale(x, num_bits_shift=8, num_bits_scale=8, print_mse =True):
+def compute_shift_scale(x, num_bits_shift=8, num_bits_scale=1, print_mse =True):
     x_abs = x.abs()
     x_sign = x.sign()
     u_p = 2**(num_bits_scale)-1
@@ -28,7 +28,9 @@ def compute_shift_scale(x, num_bits_shift=8, num_bits_scale=8, print_mse =True):
     # mse = torch.mean((x-x_hat)**2)
     # if print_mse:
     #     print(mse)
-    return shift, scale
+
+    shift_mult = torch.pow(torch.tensor([2.0]), -shift)
+    return shift_mult, scale
 
 
 class OffsetScaleShift(torch.nn.Module):
@@ -70,14 +72,13 @@ class OffsetScaleShift(torch.nn.Module):
 
         qbn_module = dict(model.named_modules())[start.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
-        bn_weight = (qbn_module.weight / bn_sigma)
-        bn_bias = qbn_module.bias - (qbn_module.running_mean / bn_sigma)
+
         scale2 = qbn_module.scale
         zero_point2 = qbn_module.zero_point
 
-        combined_weight = bn_weight / scale2
+        oss_offset = (qbn_module.bias*bn_sigma - qbn_module.running_mean) / scale2  + zero_point2 + zero_point_offset_for_activation
+        combined_weight = (qbn_module.weight / bn_sigma) / scale2
         oss_shift, oss_scale = compute_shift_scale(combined_weight)
-        oss_offset = bn_bias / scale2 + zero_point2 + zero_point_offset_for_activation
 
         oss_module = OffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
         oss_module.scale = qbn_module.scale
@@ -87,8 +88,9 @@ class OffsetScaleShift(torch.nn.Module):
     @staticmethod
     def from_qconvrelu(model, start, end):
         zero_point_offset_for_activation = -128
+        named_modules = dict(model.named_modules())
 
-        qconvrelu_module = dict(model.named_modules())[start.target]
+        qconvrelu_module = named_modules[start.target]
         conv_module = torch.nn.Conv2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels,
                                       kernel_size=qconvrelu_module.kernel_size, stride=qconvrelu_module.stride,
                                       padding=qconvrelu_module.padding, dilation=qconvrelu_module.dilation,
@@ -102,10 +104,11 @@ class OffsetScaleShift(torch.nn.Module):
 
         weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
         weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
-        input_scale = dict(model.named_modules())[start.prev.target].scale
-        input_zero_point = dict(model.named_modules())[start.prev.target].zero_point
+        input_scale = named_modules[start.prev.target].scale
+        input_zero_point = named_modules[start.prev.target].zero_point
 
-        bias_scale = weight_scale * input_scale
+        acc_scale = weight_scale * input_scale
+        bias_scale = acc_scale
         bias_zero_point = weight_zero_point
         bias = qconvrelu_module.bias()
 
@@ -118,7 +121,9 @@ class OffsetScaleShift(torch.nn.Module):
         qbias = qbias.int_repr()
 
         # conv_module.bias.data.copy_(qbias)
-        oss_shift, oss_scale = compute_shift_scale(torch.tensor(qconvrelu_module.scale))
+        relative_scale = (qconvrelu_module.scale / acc_scale).float()
+        relative_mult = (acc_scale / qconvrelu_module.scale).float()
+        oss_shift, oss_scale = compute_shift_scale(torch.tensor(relative_mult))
         oss_module = OffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
 
         seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
@@ -163,7 +168,8 @@ class OffsetScaleShift(torch.nn.Module):
             #
         #
 
-        bias_scale = weight_scale * input_scale
+        acc_scale = weight_scale * input_scale
+        bias_scale = acc_scale
         bias_zero_point = weight_zero_point
         bias = qlinear_module.bias()
 
@@ -176,7 +182,9 @@ class OffsetScaleShift(torch.nn.Module):
         qbias = qbias.int_repr()
 
         # conv_module.bias.data.copy_(qbias)
-        oss_shift, oss_scale = compute_shift_scale(torch.tensor(qlinear_module.scale))
+        relative_scale = (qlinear_module.scale / acc_scale).float()
+        relative_mult = (acc_scale / qlinear_module.scale).float()
+        oss_shift, oss_scale = compute_shift_scale(torch.tensor(relative_mult))
         oss_module = OffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
 
         seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))

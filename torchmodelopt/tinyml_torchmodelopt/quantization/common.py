@@ -29,6 +29,9 @@
 #
 #################################################################################
 
+from edgeai_torchmodelopt.xmodelopt.quantization.v2 import ModelFormat
+
+
 class TinyMLQuantizationVersion():
     NO_QUANTIZATION = 0
     QUANTIZATION_GENERIC = 1
@@ -41,3 +44,8 @@ class TinyMLQuantizationVersion():
     @classmethod
     def get_choices(cls):
         return {v:k for k,v in cls.__dict__.items() if not k.startswith("__")}
+
+
+class TinyMLModelFormat(ModelFormat):
+    TINIE_INT_MODEL = ModelFormat._NUM_FORMATS_
+    _NUM_FORMATS_ = ModelFormat._NUM_FORMATS_ + 1

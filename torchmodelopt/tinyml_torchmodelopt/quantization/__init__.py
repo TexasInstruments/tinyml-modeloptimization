@@ -29,6 +29,6 @@
 #
 #################################################################################
 
+from .common import *
 from . import generic
 from . import tinie
-from .common import TinyMLQuantizationVersion
