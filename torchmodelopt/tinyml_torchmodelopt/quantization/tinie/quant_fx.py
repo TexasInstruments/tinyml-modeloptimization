@@ -45,7 +45,7 @@ class TINIEModelFormat(ModelFormat):
 
 class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
     def convert(self, *args, model_format=TINIEModelFormat.TINIE_INT_MODEL, **kwargs):
-        self.convert(*args, **kwargs)
+        super().convert(*args, **kwargs)
         if model_format == TINIEModelFormat.TINIE_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,
                                     replacement_dict={'replace_types1': self._convert_replacement})

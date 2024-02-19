@@ -37,7 +37,7 @@ import edgeai_torchmodelopt
 
 
 class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
-    def __init__(self, model, qconfig_type=None, total_epochs=None):
+    def __init__(self, model, *args, qconfig_type=None,  **kwargs):
         qconfig_type_in = qconfig_type
         qconfig_type_default_dict = dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
                                     activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric,
@@ -50,4 +50,4 @@ class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QA
         else:
             qconfig_type = copy.deepcopy(qconfig_type_default_dict)
         #
-        super().__init__(model, qconfig_type, total_epochs)
+        super().__init__(model, *args, qconfig_type=qconfig_type, **kwargs)
