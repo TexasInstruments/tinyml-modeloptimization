@@ -31,7 +31,7 @@ def compute_shift_scale(x, num_bits_shift=8, num_bits_scale=8, print_mse =True):
     return shift, scale
 
 
-class OffsetScaleShift(torch.nn.Module):
+class TINIEOffsetScaleShift(torch.nn.Module):
     def __init__(self, offset, scale, shift, c_n, c_p, quantize_per_channel=False, use_floor=True):
         super().__init__()
         self.c_n = c_n
@@ -79,7 +79,7 @@ class OffsetScaleShift(torch.nn.Module):
         oss_shift, oss_scale = compute_shift_scale(combined_weight)
         oss_offset = bn_bias / scale2 + zero_point2 + zero_point_offset_for_activation
 
-        oss_module = OffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
         oss_module.scale = qbn_module.scale
         oss_module.zero_point = qbn_module.zero_point
         return oss_module
@@ -114,7 +114,7 @@ class OffsetScaleShift(torch.nn.Module):
 
         # conv_module.bias.data.copy_(qbias)
         oss_shift, oss_scale = compute_shift_scale(torch.tensor(qconvrelu_module.scale))
-        oss_module = OffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
+        oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
 
         seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         seq_module.scale = qconvrelu_module.scale
@@ -137,7 +137,7 @@ class OffsetScaleShift(torch.nn.Module):
     #     oss_offset = torch.tensor(0.0,device=device)
     #     oss_scale = torch.tensor(1.0,device=device)
     #     oss_shift = torch.tensor(1.0,device=device)
-    #     oss_module = OffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
+    #     oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
     #     return oss_module
 
     # @staticmethod
@@ -162,7 +162,7 @@ class OffsetScaleShift(torch.nn.Module):
     #     oss_shift, oss_scale = compute_shift_scale(combined_weight)
     #     oss_offset = bn_bias / scale2 + zero_point2 + zero_point_offset_for_activation
     #
-    #     oss_module = OffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+    #     oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
     #     return oss_module
 
     # @staticmethod

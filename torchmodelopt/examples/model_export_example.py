@@ -119,17 +119,17 @@ def quantize_replacement_function(model, pattern, *args, remove_qconfig=True, **
 
     # for qdq model
     # replacement_entries_qdq = [
-    #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_conv_relu_fq),
-    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq_bn_fq),
-    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq),
+    #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEOffsetScaleShift.from_conv_relu_fq),
+    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEOffsetScaleShift.from_fq_bn_fq),
+    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEOffsetScaleShift.from_fq),
     # }
 
     # for converted model
     replacement_entries_converted = [
-        ([torch.quantize_per_tensor], model_quant_utils.OffsetScaleShift.from_q),
-        ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], model_quant_utils.OffsetScaleShift.from_qbn),
-        ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], model_quant_utils.OffsetScaleShift.from_qconvrelu),
-        (['dequantize'], model_quant_utils.OffsetScaleShift.from_dq)
+        ([torch.quantize_per_tensor], model_quant_utils.TINIEOffsetScaleShift.from_q),
+        ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], model_quant_utils.TINIEOffsetScaleShift.from_qbn),
+        ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], model_quant_utils.TINIEOffsetScaleShift.from_qconvrelu),
+        (['dequantize'], model_quant_utils.TINIEOffsetScaleShift.from_dq)
     ]
 
     for replacement_pattern, replacement_function in replacement_entries_converted:

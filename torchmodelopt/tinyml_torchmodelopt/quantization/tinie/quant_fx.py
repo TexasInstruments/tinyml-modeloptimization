@@ -55,19 +55,19 @@ class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
 
         # for qdq model
         # replacement_entries_qdq = [
-        #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_conv_relu_fq),
-        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq_bn_fq),
-        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.OffsetScaleShift.from_fq),
+        #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_conv_relu_fq),
+        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_fq_bn_fq),
+        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_fq),
         # }
 
         # for converted model
         replacement_entries_converted = [
-            ([torch.quantize_per_tensor], quant_utils.OffsetScaleShift.from_q),
-            ([torch.nn.MaxPool2d], quant_utils.OffsetScaleShift.from_maxpool2d),
-            ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.OffsetScaleShift.from_qbn),
-            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.OffsetScaleShift.from_qconvrelu),
-            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.OffsetScaleShift.from_qlinear),
-            (['dequantize'], quant_utils.OffsetScaleShift.from_dq)
+            ([torch.quantize_per_tensor], quant_utils.TINIEQuantizedReplacement.from_q),
+            ([torch.nn.MaxPool2d], quant_utils.TINIEQuantizedReplacement.from_maxpool2d),
+            ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINIEQuantizedReplacement.from_qbn),
+            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconvrelu),
+            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINIEQuantizedReplacement.from_qlinear),
+            (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq)
         ]
 
         for replacement_pattern, replacement_function in replacement_entries_converted:
