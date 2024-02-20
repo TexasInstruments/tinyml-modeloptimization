@@ -82,7 +82,7 @@ class TINIEQuantizedReplacement:
         return oss_module
 
     @staticmethod
-    def from_qconv_relu(model, start, end):
+    def from_qconv_relu(model, start, end, with_relu=True):
         zero_point_offset_for_activation = -128
         named_modules = dict(model.named_modules())
 
@@ -120,9 +120,15 @@ class TINIEQuantizedReplacement:
         relative_scale = (qconvrelu_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
         offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
-        oss_module = TINIEOffsetScaleShift(offset, oss_scale, oss_shift, -255, 255)
-
-        seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+        if with_relu:
+            oss_module = TINIEOffsetScaleShift(offset, oss_scale, oss_shift, -255, 255)
+            seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+        else:
+            # this clip is left to -255, 255 here, assuming that there is an Add and ReLU after this.
+            # Otherwise it should be -128, 127
+            oss_module = TINIEOffsetScaleShift(offset, oss_scale, oss_shift, -255, 255)
+            seq_module = torch.nn.Sequential(conv_module, oss_module)
+        #
         seq_module.scale = qconvrelu_module.scale
         seq_module.zero_point = qconvrelu_module.zero_point
         return seq_module
@@ -181,12 +187,13 @@ class TINIEQuantizedReplacement:
         relative_scale = (qlinear_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qlinear_module.scale).float()
         offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
-        oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
 
         if with_relu:
+            oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, 0, 255)
             seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         else:
-            seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.Hardtanh(-128, 127))
+            oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, -128, 127)
+            seq_module = torch.nn.Sequential(linear_module, oss_module)
         #
         seq_module.scale = qlinear_module.scale
         seq_module.zero_point = qlinear_module.zero_point
