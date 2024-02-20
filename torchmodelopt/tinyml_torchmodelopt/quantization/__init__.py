@@ -32,3 +32,6 @@
 from .common import *
 from . import generic
 from . import tinie
+
+from .generic import GenericTinyMLQATFxModule
+from .tinie import TINIETinyMLQATFxModule

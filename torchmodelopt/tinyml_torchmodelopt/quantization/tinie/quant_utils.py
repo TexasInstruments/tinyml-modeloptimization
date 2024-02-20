@@ -6,21 +6,21 @@ import torch
 def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=1, print_mse =True):
     weight_abs = weight.abs()
     weight_sign = weight.sign()
-    u_p = (2**num_bits_scale)-1
-    power_of_2 = torch.floor(torch.log2(u_p/weight_abs))*torch.tensor([1.0])
-    shift = power_of_2.clamp(min=0, max=(2**(num_bits_shift)-1))
+    scale_max = (2**num_bits_scale)-1
+    power_of_2 = torch.floor(torch.log2(scale_max/weight_abs))*torch.tensor([1.0])
+    shift = power_of_2.clamp(min=0, max=((2**num_bits_shift)-1))
     scale = weight_abs * torch.pow(torch.tensor([2.0]), shift)
 
     mask = torch.isnan(scale)
     scale[mask] = 0
     shift[mask] = 1
 
-    assert(torch.sum(scale > u_p) == 0)
+    assert(torch.sum(scale > scale_max) == 0)
     scale = weight_sign*torch.round(scale)
     shift_mult = torch.pow(torch.tensor([2.0]), -shift)
 
     if print_mse:
-        weight_hat = scale *  torch.pow(torch.tensor([2.0]), -shift)
+        weight_hat = scale * torch.pow(torch.tensor([2.0]), -shift)
         mse = torch.mean((weight-weight_hat)**2)
         print(mse)
     #
@@ -41,8 +41,6 @@ class TINIEOffsetScaleShift(torch.nn.Module):
     def extra_repr(self):
         return f'offset={self.offset}, scale={self.scale}, shift={self.shift}, quant_min={self.quant_min}, quant_max={self.quant_max}'
 
-
-class TINIEQuantizedReplacement:
     def forward(self, x):
         y = (x + self.offset.reshape(1,-1,1,1))*self.scale.reshape(1,-1,1,1)
         y = y * self.shift.reshape(1,-1,1,1)
@@ -52,6 +50,8 @@ class TINIEQuantizedReplacement:
             y = torch.round(y).clamp(min=self.quant_min,max=self.quant_max)
         return y
 
+
+class TINIEQuantizedReplacement:
     @staticmethod
     def from_q(model, start, end):
         q_node = start
@@ -74,7 +74,7 @@ class TINIEQuantizedReplacement:
 
         oss_offset = (qbn_module.bias*bn_sigma - qbn_module.running_mean) / scale2  + zero_point2 + zero_point_offset_for_activation
         combined_weight = (qbn_module.weight / bn_sigma) / scale2
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
 
         oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
         oss_module.scale = qbn_module.scale

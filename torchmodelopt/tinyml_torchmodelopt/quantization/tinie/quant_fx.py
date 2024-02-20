@@ -38,16 +38,18 @@ from ..common import TinyMLQuantizationVersion, TinyMLQuantModelFormat
 
 
 class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
-    def convert(self, *args, model_format=TinyMLQuantModelFormat.TINIE_INT_MODEL, **kwargs):
+    def convert(self, *args, quant_model_format=None, **kwargs):
+        quant_model_format = quant_model_format or TinyMLQuantModelFormat.TINIE_INT_MODEL
         super().convert(*args, **kwargs)
-        if model_format == TinyMLQuantModelFormat.TINIE_INT_MODEL:
+        if quant_model_format == TinyMLQuantModelFormat.TINIE_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,
                                     replacement_dict={'replace_types1': self._convert_replacement})
         #
         return self
 
-    def export(self, *args, model_format=TinyMLQuantModelFormat.TINIE_INT_MODEL, **kwargs):
-        super().export(*args, model_format=model_format, **kwargs)
+    def export(self, *args, quant_model_format=None, **kwargs):
+        quant_model_format = quant_model_format or TinyMLQuantModelFormat.TINIE_INT_MODEL
+        super().export(*args, quant_model_format=quant_model_format, **kwargs)
 
     @staticmethod
     def _convert_replacement(model, pattern, *args, remove_qconfig=True, **kwargs):

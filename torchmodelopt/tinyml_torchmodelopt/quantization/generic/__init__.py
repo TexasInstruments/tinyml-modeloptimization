@@ -34,14 +34,15 @@ import os.path
 
 import torch
 import edgeai_torchmodelopt
+from ..common import TinyMLQuantizationVersion, TinyMLQuantModelFormat
 
 
 class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
     def __init__(self, model, *args, qconfig_type=None,  **kwargs):
         qconfig_type_in = qconfig_type
         qconfig_type_default_dict = dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
-                                    activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric,
-                                    power2_scale=True, range_max=None, fixed_range=False))
+                                         activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric,
+                                         power2_scale=True, range_max=None, fixed_range=False))
         if qconfig_type_in is not None and isinstance(qconfig_type_in, dict):
             qconfig_type = copy.deepcopy(qconfig_type_default_dict)
             qconfig_type.update(qconfig_type_in)
@@ -51,3 +52,11 @@ class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QA
             qconfig_type = copy.deepcopy(qconfig_type_default_dict)
         #
         super().__init__(model, *args, qconfig_type=qconfig_type, **kwargs)
+
+    def convert(self, *args, quant_model_format=None, **kwargs):
+        quant_model_format = quant_model_format or TinyMLQuantModelFormat.INT_MODEL
+        return super().convert(*args, quant_model_format=quant_model_format, **kwargs)
+
+    def export(self, *args, quant_model_format=None, **kwargs):
+        quant_model_format = quant_model_format or TinyMLQuantModelFormat.INT_MODEL
+        super().export(*args, quant_model_format=quant_model_format, **kwargs)
