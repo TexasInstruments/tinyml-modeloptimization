@@ -67,7 +67,8 @@ class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
             ([torch.quantize_per_tensor], quant_utils.TINIEQuantizedReplacement.from_q),
             ([torch.nn.MaxPool2d], quant_utils.TINIEQuantizedReplacement.from_maxpool2d),
             ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINIEQuantizedReplacement.from_qbn),
-            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconvrelu),
+            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconv_relu),
+            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINIEQuantizedReplacement.from_qlinear_relu),
             ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINIEQuantizedReplacement.from_qlinear),
             (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq)
         ]

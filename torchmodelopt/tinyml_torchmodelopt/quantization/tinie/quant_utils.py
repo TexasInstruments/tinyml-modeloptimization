@@ -82,7 +82,7 @@ class TINIEQuantizedReplacement:
         return oss_module
 
     @staticmethod
-    def from_qconvrelu(model, start, end):
+    def from_qconv_relu(model, start, end):
         zero_point_offset_for_activation = -128
         named_modules = dict(model.named_modules())
 
@@ -128,7 +128,7 @@ class TINIEQuantizedReplacement:
         return seq_module
 
     @staticmethod
-    def from_qlinear(model, start, end):
+    def from_qlinear(model, start, end, with_relu=False):
         zero_point_offset_for_activation = -128
 
         named_modules = dict(model.named_modules())
@@ -183,10 +183,18 @@ class TINIEQuantizedReplacement:
         offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
         oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, -255, 255)
 
-        seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+        if with_relu:
+            seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+        else:
+            seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.Hardtanh(-128, 127))
+        #
         seq_module.scale = qlinear_module.scale
         seq_module.zero_point = qlinear_module.zero_point
         return seq_module
+
+    @staticmethod
+    def from_qlinear_relu(model, start, end, with_relu=True):
+        return __class__.from_qlinear(model, start, end, with_relu=with_relu)
 
     @staticmethod
     def from_maxpool2d(model, start, end):
