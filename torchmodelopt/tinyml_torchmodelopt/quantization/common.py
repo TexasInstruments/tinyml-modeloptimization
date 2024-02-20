@@ -29,7 +29,7 @@
 #
 #################################################################################
 
-from edgeai_torchmodelopt.xmodelopt.quantization.v2 import ModelFormat
+from edgeai_torchmodelopt.xmodelopt.quantization.v2 import QuantModelFormat
 
 
 class TinyMLQuantizationVersion():
@@ -46,6 +46,6 @@ class TinyMLQuantizationVersion():
         return {v:k for k,v in cls.__dict__.items() if not k.startswith("__")}
 
 
-class TinyMLModelFormat(ModelFormat):
-    TINIE_INT_MODEL = ModelFormat._NUM_FORMATS_
-    _NUM_FORMATS_ = ModelFormat._NUM_FORMATS_ + 1
+class TinyMLQuantModelFormat(QuantModelFormat):
+    TINIE_INT_MODEL = "TINIE_INT_MODEL"
+    _NUM_FORMATS_ = QuantModelFormat._NUM_FORMATS_ + 1
