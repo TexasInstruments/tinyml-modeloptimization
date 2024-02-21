@@ -27,6 +27,15 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=
     return offset, scale, shift_mult
 
 
+class MultiplyModule(torch.nn.Module):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def forward(self, x):
+        return torch.mul(x, self.value)
+
+
 class TINIEOffsetScaleShift(torch.nn.Module):
     def __init__(self, offset, scale, shift, quant_min, quant_max, quantize_per_channel=False, use_floor=True):
         super().__init__()
@@ -213,10 +222,20 @@ class TINIEQuantizedReplacement:
 
     @staticmethod
     def from_dq(model, start, end):
+        prev_module = dict(model.named_modules())[start.prev.target]
         id_module = torch.nn.Identity()
-        id_module.scale = 1.0
+        id_module.scale = prev_module.scale
         id_module.zero_point = 0.0
         return id_module
+
+    @staticmethod
+    def from_dq_with_dq(model, start, end):
+        id_module = __class__.from_dq(model, start, end)
+        mult_module = MultiplyModule(id_module.scale)
+        output_module = torch.nn.Sequential(id_module, mult_module)
+        output_module.scale = 1.0
+        output_module.zero_point = 0.0
+        return output_module
 
     # @staticmethod
     # def from_fq(model, start, end):

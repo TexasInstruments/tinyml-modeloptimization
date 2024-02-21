@@ -38,6 +38,10 @@ from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 
 class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
+    def __init__(self, *args, output_dequantize=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.output_dequantize = output_dequantize
+
     def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, **kwargs):
         super().convert(*args, **kwargs)
         if model_quant_format == TinyMLModelQuantFormat.TINIE_INT_MODEL:
@@ -51,9 +55,8 @@ class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
         super().export(*args, model_quant_format=model_quant_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
 
-    @staticmethod
-    def _convert_replacement(model, pattern, *args, remove_qconfig=True, **kwargs):
-        model = torch.fx.symbolic_trace(model) if not isinstance(model, torch.fx.GraphModule) else model
+    def _convert_replacement(self, module, pattern, *args, remove_qconfig=True, **kwargs):
+        module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
 
         # for qdq model
         # replacement_entries_qdq = [
@@ -70,16 +73,16 @@ class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconv_relu),
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINIEQuantizedReplacement.from_qlinear_relu),
             ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINIEQuantizedReplacement.from_qlinear),
-            (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq)
+            (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq_with_dq if self.output_dequantize else quant_utils.TINIEQuantizedReplacement.from_dq)
         ]
 
         for replacement_pattern, replacement_function in replacement_entries_converted:
             matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(
-                model, replacement_pattern)
+                module, replacement_pattern)
             for no_of_module_replaced, (start, end) in enumerate(matches):
-                new_fq_module = replacement_function(model, start, end)
+                new_fq_module = replacement_function(module, start, end)
                 edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(
-                    model, start, end, new_fq_module, no_of_module_replaced)
+                    module, start, end, new_fq_module, no_of_module_replaced)
             #
         #
-        return model
+        return module
