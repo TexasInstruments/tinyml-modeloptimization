@@ -34,22 +34,21 @@ import torch
 import edgeai_torchmodelopt
 from .. import generic
 from . import quant_utils
-from ..common import TinyMLQuantizationVersion, TinyMLQuantModelFormat
+from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 
 class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
-    def convert(self, *args, quant_model_format=None, **kwargs):
-        quant_model_format = quant_model_format or TinyMLQuantModelFormat.TINIE_INT_MODEL
+    def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, **kwargs):
         super().convert(*args, **kwargs)
-        if quant_model_format == TinyMLQuantModelFormat.TINIE_INT_MODEL:
+        if model_quant_format == TinyMLModelQuantFormat.TINIE_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,
                                     replacement_dict={'replace_types1': self._convert_replacement})
         #
         return self
 
-    def export(self, *args, quant_model_format=TinyMLQuantModelFormat.TINIE_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
+    def export(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
         skipped_optimizers = skipped_optimizers or ['fuse_add_bias_into_conv']
-        super().export(*args, quant_model_format=quant_model_format, simplify=simplify,
+        super().export(*args, model_quant_format=model_quant_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
 
     @staticmethod

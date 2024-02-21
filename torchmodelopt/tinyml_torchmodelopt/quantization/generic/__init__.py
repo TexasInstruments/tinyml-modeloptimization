@@ -34,7 +34,7 @@ import os.path
 
 import torch
 import edgeai_torchmodelopt
-from ..common import TinyMLQuantizationVersion, TinyMLQuantModelFormat
+from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 
 class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
@@ -53,8 +53,8 @@ class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QA
         #
         super().__init__(model, *args, qconfig_type=qconfig_type, **kwargs)
 
-    def convert(self, *args, quant_model_format=TinyMLQuantModelFormat.INT_MODEL, **kwargs):
-        return super().convert(*args, quant_model_format=quant_model_format, **kwargs)
+    def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.INT_MODEL, **kwargs):
+        return super().convert(*args, model_quant_format=model_quant_format, **kwargs)
 
-    def export(self, *args, quant_model_format=TinyMLQuantModelFormat.INT_MODEL, **kwargs):
-        super().export(*args, quant_model_format=quant_model_format, **kwargs)
+    def export(self, *args, model_quant_format=TinyMLModelQuantFormat.INT_MODEL, **kwargs):
+        super().export(*args, model_quant_format=model_quant_format, **kwargs)
