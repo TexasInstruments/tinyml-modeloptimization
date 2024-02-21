@@ -47,9 +47,8 @@ class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
         #
         return self
 
-    def export(self, *args, quant_model_format=None, simplify=True, skipped_optimizers=None, **kwargs):
+    def export(self, *args, quant_model_format=TinyMLQuantModelFormat.TINIE_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
         skipped_optimizers = skipped_optimizers or ['fuse_add_bias_into_conv']
-        quant_model_format = quant_model_format or TinyMLQuantModelFormat.TINIE_INT_MODEL
         super().export(*args, quant_model_format=quant_model_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
 

@@ -53,10 +53,8 @@ class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QA
         #
         super().__init__(model, *args, qconfig_type=qconfig_type, **kwargs)
 
-    def convert(self, *args, quant_model_format=None, **kwargs):
-        quant_model_format = quant_model_format or TinyMLQuantModelFormat.INT_MODEL
+    def convert(self, *args, quant_model_format=TinyMLQuantModelFormat.INT_MODEL, **kwargs):
         return super().convert(*args, quant_model_format=quant_model_format, **kwargs)
 
-    def export(self, *args, quant_model_format=None, **kwargs):
-        quant_model_format = quant_model_format or TinyMLQuantModelFormat.INT_MODEL
+    def export(self, *args, quant_model_format=TinyMLQuantModelFormat.INT_MODEL, **kwargs):
         super().export(*args, quant_model_format=quant_model_format, **kwargs)
