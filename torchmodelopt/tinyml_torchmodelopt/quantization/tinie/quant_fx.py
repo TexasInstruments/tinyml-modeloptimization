@@ -32,14 +32,16 @@
 import copy
 import torch
 import edgeai_torchmodelopt
-from .. import generic
 from . import quant_utils
 from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 
-class TINIETinyMLQATFxModule(generic.GenericTinyMLQATFxModule):
-    def __init__(self, *args, output_dequantize=False, **kwargs):
-        super().__init__(*args, **kwargs)
+class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
+    def __init__(self, *args, qconfig_type=None, output_dequantize=False, **kwargs):
+        qconfig_type = qconfig_type or dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
+                                         activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric,
+                                         power2_scale=True, range_max=None, fixed_range=False))
+        super().__init__(*args, qconfig_type=qconfig_type, **kwargs)
         self.output_dequantize = output_dequantize
 
     def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, **kwargs):
