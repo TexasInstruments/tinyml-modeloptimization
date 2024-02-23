@@ -57,11 +57,23 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
         return self
 
     def export(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
-        skipped_optimizers = skipped_optimizers or ['fuse_add_bias_into_conv']
+        skipped_optimizers = skipped_optimizers or ['fuse_add_bias_into_conv', 'eliminate_nop_with_unit']
         super().export(*args, model_quant_format=model_quant_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
 
-    def _convert_replacement(self, module, pattern, *args, remove_qconfig=True, **kwargs):
+    def _convert_replacement(self, module, pattern, *args, **kwargs):
+        named_modules = dict(module.named_modules())
+        modules_list = list(named_modules.values())
+        first_module_with_params = None
+        for name_entry, module_entry in named_modules.items():
+            if len(list(module_entry.parameters(recurse=False))) > 0:
+                first_module_with_params = module_entry
+                break
+            #
+        #
+        with_input_batchnorm = isinstance(first_module_with_params,
+                    (torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d, torch.nn.BatchNorm2d))
+
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
 
         # for qdq model
@@ -71,11 +83,19 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
         #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_fq),
         # }
 
+        if with_input_batchnorm:
+            first_entry = [
+                ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINIEQuantizedReplacement.from_q_qbn)
+            ]
+        else:
+            first_entry = [
+                ([torch.quantize_per_tensor, torch.nn.Identity], quant_utils.TINIEQuantizedReplacement.from_q_id),
+                ([torch.quantize_per_tensor], quant_utils.TINIEQuantizedReplacement.from_q)
+            ]
+
         # for converted model
-        replacement_entries_converted = [
-            ([torch.quantize_per_tensor], quant_utils.TINIEQuantizedReplacement.from_q),
+        replacement_entries_converted = first_entry + [
             ([torch.nn.MaxPool2d], quant_utils.TINIEQuantizedReplacement.from_maxpool2d),
-            ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINIEQuantizedReplacement.from_qbn),
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconv_relu),
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINIEQuantizedReplacement.from_qlinear_relu),
             ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINIEQuantizedReplacement.from_qlinear),

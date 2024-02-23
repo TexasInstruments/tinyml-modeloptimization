@@ -3,7 +3,7 @@ import edgeai_torchmodelopt.xmodelopt.quantization.v2.quant_fx_base
 import torch
 
 
-def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=1, print_mse =True):
+def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=1, print_mse=False):
     weight_abs = weight.abs()
     weight_sign = weight.sign()
     scale_max = (2**num_bits_scale)-1
@@ -37,22 +37,22 @@ class MultiplyModule(torch.nn.Module):
 
 
 class TINIEOffsetScaleShift(torch.nn.Module):
-    def __init__(self, offset, scale, shift, quant_min, quant_max, quantize_per_channel=False, use_floor=True):
+    def __init__(self, offset, mult, shift_mult, quant_min, quant_max, quantize_per_channel=False, use_floor=True):
         super().__init__()
         self.quant_min = quant_min
         self.quant_max = quant_max
         self.quantize_per_channel = quantize_per_channel
         self.use_floor = use_floor
         self.register_buffer('offset', offset)
-        self.register_buffer('scale', scale)
-        self.register_buffer('shift', shift)
+        self.register_buffer('mult', mult)
+        self.register_buffer('shift_mult', shift_mult)
 
     def extra_repr(self):
-        return f'offset={self.offset}, scale={self.scale}, shift={self.shift}, quant_min={self.quant_min}, quant_max={self.quant_max}'
+        return f'offset={self.offset}, mult={self.mult}, shift={self.shift}, quant_min={self.quant_min}, quant_max={self.quant_max}'
 
     def forward(self, x):
-        y = (x + self.offset.reshape(1,-1,1,1))*self.scale.reshape(1,-1,1,1)
-        y = y * self.shift.reshape(1,-1,1,1)
+        y = (x + self.offset.reshape(1,-1,1,1))*self.mult.reshape(1,-1,1,1)
+        y = y * self.shift_mult.reshape(1,-1,1,1)
         if self.use_floor:
             y = torch.floor(y).clamp(min=self.quant_min, max=self.quant_max) #the floor operation mimics the actual shift and bit select in hardware
         else:
@@ -66,16 +66,21 @@ class TINIEQuantizedReplacement:
         q_node = start
         scale = getattr(model, q_node.args[1].target)
         zero_point = getattr(model, q_node.args[2].target)
-        id_module = torch.nn.Identity()
-        id_module.scale = scale
-        id_module.zero_point = zero_point
-        return id_module
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
+        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+        oss_module.scale = scale
+        oss_module.zero_point = zero_point
+        return oss_module
 
     @staticmethod
-    def from_qbn(model, start, end):
+    def from_q_id(model, start, end):
+        return __class__.from_q(model, start, end)
+
+    @staticmethod
+    def from_q_qbn(model, start, end):
         zero_point_offset_for_activation = -128
 
-        qbn_module = dict(model.named_modules())[start.target]
+        qbn_module = dict(model.named_modules())[end.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
 
         scale2 = qbn_module.scale
