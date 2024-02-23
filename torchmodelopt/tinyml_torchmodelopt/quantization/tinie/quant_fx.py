@@ -38,9 +38,13 @@ from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
     def __init__(self, *args, qconfig_type=None, output_dequantize=False, **kwargs):
-        qconfig_type = qconfig_type or dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
-                                         activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric,
-                                         power2_scale=True, range_max=None, fixed_range=False))
+        if qconfig_type is None:
+            # there are multiple ways to specify qconfig_type - one is to use a dictionary like this.
+            # qconfig_type = qconfig_type or dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
+            #   activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric, power2_scale=True, range_max=None, fixed_range=False))
+            # another way is to use one of the predefined presets
+            qconfig_type = edgeai_torchmodelopt.xmodelopt.quantization.v2.qconfig_types.QConfigType.WC8SYMP2_AT8SYMP2
+        #
         super().__init__(*args, qconfig_type=qconfig_type, **kwargs)
         self.output_dequantize = output_dequantize
 
