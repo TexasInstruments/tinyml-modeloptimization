@@ -29,6 +29,7 @@
 #
 #################################################################################
 
+import functools
 import copy
 import torch
 import edgeai_torchmodelopt
@@ -37,7 +38,7 @@ from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 
 class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
-    def __init__(self, *args, qconfig_type=None, output_dequantize=False, **kwargs):
+    def __init__(self, *args, qconfig_type=None, **kwargs):
         if qconfig_type is None:
             # there are multiple ways to specify qconfig_type - one is to use a dictionary like this.
             # qconfig_type = qconfig_type or dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
@@ -46,13 +47,16 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
             qconfig_type = edgeai_torchmodelopt.xmodelopt.quantization.v2.qconfig_types.QConfigType.WC8SYMP2_AT8SYMP2
         #
         super().__init__(*args, qconfig_type=qconfig_type, **kwargs)
-        self.output_dequantize = output_dequantize
 
-    def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, **kwargs):
+    def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, output_dequantize=False, **kwargs):
+        # first convert the model to int
         super().convert(*args, **kwargs)
+        _convert_replacement_func = functools.partial(self._convert_replacement, output_dequantize=output_dequantize)
+        
+        # then apply the transformation to required output format
         if model_quant_format == TinyMLModelQuantFormat.TINIE_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,
-                                    replacement_dict={'replace_types1': self._convert_replacement})
+                                    replacement_dict={'replace_types1': _convert_replacement_func})
         #
         return self
 
@@ -61,7 +65,7 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
         super().export(*args, model_quant_format=model_quant_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
 
-    def _convert_replacement(self, module, pattern, *args, **kwargs):
+    def _convert_replacement(self, module, pattern, *args, output_dequantize=False, **kwargs):
         named_modules = dict(module.named_modules())
         modules_list = list(named_modules.values())
         first_module_with_params = None
@@ -83,6 +87,7 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
         #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_fq),
         # }
 
+        # for converted model
         if with_input_batchnorm:
             first_entry = [
                 ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINIEQuantizedReplacement.from_q_qbn)
@@ -99,7 +104,7 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconv_relu),
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINIEQuantizedReplacement.from_qlinear_relu),
             ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINIEQuantizedReplacement.from_qlinear),
-            (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq_with_dq if self.output_dequantize else quant_utils.TINIEQuantizedReplacement.from_dq)
+            (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq_with_dq if output_dequantize else quant_utils.TINIEQuantizedReplacement.from_dq)
         ]
 
         for replacement_pattern, replacement_function in replacement_entries_converted:

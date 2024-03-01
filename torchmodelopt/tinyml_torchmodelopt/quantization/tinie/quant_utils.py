@@ -200,13 +200,13 @@ class TINIEQuantizedReplacement:
         # conv_module.bias.data.copy_(qbias)
         relative_scale = (qlinear_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qlinear_module.scale).float()
-        offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
 
         if with_relu:
-            oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, 0, 255)
+            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
             seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         else:
-            oss_module = TINIEOffsetScaleShift(qbias, oss_scale, oss_shift, -128, 127)
+            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
             seq_module = torch.nn.Sequential(linear_module, oss_module)
         #
         seq_module.scale = qlinear_module.scale
