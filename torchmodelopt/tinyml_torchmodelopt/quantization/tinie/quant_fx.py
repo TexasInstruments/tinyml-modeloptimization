@@ -29,7 +29,6 @@
 #
 #################################################################################
 
-import functools
 import copy
 import torch
 import edgeai_torchmodelopt
@@ -51,7 +50,7 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
     def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
         super().convert(*args, **kwargs)
-        _convert_replacement_func = functools.partial(self._convert_replacement, output_dequantize=output_dequantize)
+        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         
         # then apply the transformation to required output format
         if model_quant_format == TinyMLModelQuantFormat.TINIE_INT_MODEL:
