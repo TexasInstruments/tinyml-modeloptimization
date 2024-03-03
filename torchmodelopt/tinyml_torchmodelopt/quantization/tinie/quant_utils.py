@@ -24,6 +24,11 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=
         mse = torch.mean((weight-weight_hat)**2)
         print(mse)
     #
+
+    # add round offset to the offset. since the offset is before the scale, divide it by scale before adding
+    shift_round_offset = torch.pow(torch.tensor([2.0]), (shift-1)) / scale
+    offset = offset + shift_round_offset
+
     return offset, scale, shift_mult
 
 
@@ -78,15 +83,16 @@ class TINIEQuantizedReplacement:
 
     @staticmethod
     def from_q_qbn(model, start, end):
-        zero_point_offset_for_activation = -128
-
         qbn_module = dict(model.named_modules())[end.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
+        bn_sigma_inv = 1.0 / bn_sigma
 
         scale2 = qbn_module.scale
         zero_point2 = qbn_module.zero_point
+        # zero_point_offset_for_activation = -128
+        # output_zero_point = + zero_point2 + zero_point_offset_for_activation
 
-        oss_offset = (qbn_module.bias*bn_sigma - qbn_module.running_mean) / scale2  + zero_point2 + zero_point_offset_for_activation
+        oss_offset = (- qbn_module.running_mean + qbn_module.bias*bn_sigma )
         combined_weight = (qbn_module.weight / bn_sigma) / scale2
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
 
@@ -133,9 +139,9 @@ class TINIEQuantizedReplacement:
         # conv_module.bias.data.copy_(qbias)
         relative_scale = (qconvrelu_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
-        offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
         if with_relu:
-            oss_module = TINIEOffsetScaleShift(offset, oss_scale, oss_shift, -255, 255)
+            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
             seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         else:
             # this clip is left to -255, 255 here, assuming that there is an Add and ReLU after this.
