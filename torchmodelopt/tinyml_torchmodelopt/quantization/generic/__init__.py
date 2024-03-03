@@ -34,10 +34,10 @@ import os.path
 
 import torch
 import edgeai_torchmodelopt
-from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
-
-
-class GenericTinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
+from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat, GenericTinyMLQATFxModuleBase
+    
+    
+class GenericTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def __init__(self, model, *args, qconfig_type=None,  **kwargs):
         # qconfig_type = None is equivalent to WC8AT8 (or DEFAULT) which uses per_tensor_affine
         # Note: activation qscheme=torch.per_tensor_affine can be converted onnx model with QOperator using onnxruntime optimization

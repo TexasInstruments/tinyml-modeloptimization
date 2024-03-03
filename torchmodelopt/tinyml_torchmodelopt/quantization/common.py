@@ -29,7 +29,9 @@
 #
 #################################################################################
 
+import torch
 from edgeai_torchmodelopt.xmodelopt.quantization.v2 import ModelQuantFormat
+import edgeai_torchmodelopt
 
 
 class TinyMLQuantizationVersion():
@@ -49,3 +51,19 @@ class TinyMLQuantizationVersion():
 class TinyMLModelQuantFormat(ModelQuantFormat):
     TINIE_INT_MODEL = "TINIE_INT_MODEL"
     _NUM_FORMATS_ = ModelQuantFormat._NUM_FORMATS_ + 1
+
+
+class GenericTinyMLQATFxModuleBase(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
+    def measure_stats(self, float_output, quant_output):
+        diff_output = (float_output - quant_output)
+        quant_error_min = diff_output.abs().min().item()
+        quant_error_max = diff_output.abs().max().item()
+        quant_error_mean = diff_output.abs().mean().item()
+        quant_snr_db = (torch.log10((float_output**2).mean() / (diff_output**2).mean()) * 10).item()
+        quant_psnr_db = (torch.log10((float_output**2).max() / (diff_output**2).mean()) * 10).item()        
+        quant_absmu_by_sigma = (float_output.abs().mean() / diff_output.std()).item()
+        diff_output_stats = dict(snr_db=quant_snr_db, psnr_db=quant_psnr_db, absmu_by_sigma=quant_absmu_by_sigma, 
+                                 min=quant_error_min, max=quant_error_max, mean=quant_error_mean)
+        return diff_output_stats
+    
+    

@@ -32,11 +32,11 @@
 import copy
 import torch
 import edgeai_torchmodelopt
+from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat, GenericTinyMLQATFxModuleBase
 from . import quant_utils
-from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat
 
 
-class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule):
+class TINIETinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def __init__(self, *args, qconfig_type=None, **kwargs):
         if qconfig_type is None:
             # there are multiple ways to specify qconfig_type - one is to use a dictionary like this.
@@ -50,7 +50,8 @@ class TINIETinyMLQATFxModule(edgeai_torchmodelopt.xmodelopt.quantization.v2.QATF
     def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
         super().convert(*args, **kwargs)
-        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
+        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: \
+            self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         
         # then apply the transformation to required output format
         if model_quant_format == TinyMLModelQuantFormat.TINIE_INT_MODEL:
