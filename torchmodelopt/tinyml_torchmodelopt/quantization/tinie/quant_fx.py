@@ -65,6 +65,21 @@ class TINIETinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         super().export(*args, model_quant_format=model_quant_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
 
+    def measure_stats(self, float_output, quant_output):
+        diff_output = (float_output - quant_output)
+        diff_output_abs = diff_output.abs()
+        diff_output_sqr = diff_output**2
+        float_output_sqr = float_output**2
+        quant_error_min = diff_output_abs.min().item()
+        quant_error_max = diff_output_abs.max().item()
+        quant_error_mean = diff_output_abs.mean().item()
+        quant_snr_db = (10 * torch.log10(float_output_sqr.mean() / diff_output_sqr.mean())).item()
+        quant_psnr_db = (10 * torch.log10(float_output_sqr.max() / diff_output_sqr.mean())).item()
+        quant_absmu_by_sigma = (float_output.abs().mean() / diff_output.std()).item()
+        diff_output_stats = dict(snr_db=quant_snr_db, psnr_db=quant_psnr_db, absmu_by_sigma=quant_absmu_by_sigma,
+                                 mean=quant_error_mean, min=quant_error_min, max=quant_error_max)
+        return diff_output_stats
+
     def _convert_replacement(self, module, pattern, *args, output_dequantize=False, **kwargs):
         named_modules = dict(module.named_modules())
         modules_list = list(named_modules.values())
