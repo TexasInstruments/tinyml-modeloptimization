@@ -2,6 +2,7 @@ wheel
 cython
 numpy==1.23.0
 protobuf==3.20.2
+pillow
 onnx==1.13.0
 progressbar
 onnxsim
