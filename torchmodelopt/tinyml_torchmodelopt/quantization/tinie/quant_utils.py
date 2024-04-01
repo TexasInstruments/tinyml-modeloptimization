@@ -27,7 +27,7 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=
 
     # add round offset to the offset. since the offset is before the scale, divide it by scale before adding
     shift_round_offset = torch.pow(torch.tensor([2.0]), (shift-1)) / scale
-    offset = offset + shift_round_offset
+    offset = torch.floor(offset + shift_round_offset)
 
     return offset, scale, shift_mult
 
@@ -42,22 +42,34 @@ class MultiplyModule(torch.nn.Module):
 
 
 class TINIEOffsetScaleShift(torch.nn.Module):
-    def __init__(self, offset, mult, shift_mult, quant_min, quant_max, quantize_per_channel=False, use_floor=True):
+    def __init__(self, offset, mult, shift_mult, quant_min, quant_max, quantize_per_channel=False, use_floor=True, ndim=4, dim=1):
         super().__init__()
         self.quant_min = quant_min
         self.quant_max = quant_max
         self.quantize_per_channel = quantize_per_channel
         self.use_floor = use_floor
-        self.register_buffer('offset', offset)
-        self.register_buffer('mult', mult)
-        self.register_buffer('shift_mult', shift_mult)
+        if ndim == 4 and dim == 1:
+            self.register_buffer('offset', offset.reshape(1,-1,1,1))
+            self.register_buffer('mult', mult.reshape(1,-1,1,1))
+            self.register_buffer('shift_mult', shift_mult.reshape(1,-1,1,1))
+        elif ndim == 2 and dim == 1:
+            self.register_buffer('offset', offset.reshape(1,-1))
+            self.register_buffer('mult', mult.reshape(1,-1))
+            self.register_buffer('shift_mult', shift_mult.reshape(1,-1))
+        elif ndim == 1:
+            self.register_buffer('offset', offset.reshape(-1))
+            self.register_buffer('mult', mult.reshape(-1))
+            self.register_buffer('shift_mult', shift_mult.reshape(-1))
+        else:
+            raise RuntimeError('Invalid dimensions')
+        #
 
     def extra_repr(self):
         return f'offset={self.offset}, mult={self.mult}, shift={self.shift}, quant_min={self.quant_min}, quant_max={self.quant_max}'
 
     def forward(self, x):
-        y = (x + self.offset.reshape(1,-1,1,1))*self.mult.reshape(1,-1,1,1)
-        y = y * self.shift_mult.reshape(1,-1,1,1)
+        y = (x + self.offset) * self.mult
+        y = y * self.shift_mult
         if self.use_floor:
             y = torch.floor(y).clamp(min=self.quant_min, max=self.quant_max) #the floor operation mimics the actual shift and bit select in hardware
         else:
@@ -72,7 +84,7 @@ class TINIEQuantizedReplacement:
         scale = getattr(model, q_node.args[1].target)
         zero_point = getattr(model, q_node.args[2].target)
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
-        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = scale
         oss_module.zero_point = zero_point
         return oss_module
@@ -96,7 +108,7 @@ class TINIEQuantizedReplacement:
         combined_weight = (qbn_module.weight / bn_sigma) / scale2
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
 
-        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = qbn_module.scale
         oss_module.zero_point = qbn_module.zero_point
         return oss_module
@@ -146,7 +158,7 @@ class TINIEQuantizedReplacement:
         else:
             # this clip is left to -255, 255 here, assuming that there is an Add and ReLU after this.
             # Otherwise it should be -128, 127
-            oss_module = TINIEOffsetScaleShift(offset, oss_scale, oss_shift, -255, 255)
+            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
             seq_module = torch.nn.Sequential(conv_module, oss_module)
         #
         seq_module.scale = qconvrelu_module.scale
@@ -209,10 +221,10 @@ class TINIEQuantizedReplacement:
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
 
         if with_relu:
-            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
+            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
             seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         else:
-            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=2, dim=1)
             seq_module = torch.nn.Sequential(linear_module, oss_module)
         #
         seq_module.scale = qlinear_module.scale
