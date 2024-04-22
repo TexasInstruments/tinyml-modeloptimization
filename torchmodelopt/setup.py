@@ -78,11 +78,11 @@ def main():
     setup(
         name='tinyml_torchmodelopt',
         version=version_str,
-        description='TinyML Model Optimization ToolKit For Torch',
+        description='Tiny ML Model Optimization ToolKit For Torch',
         long_description=long_description,
         long_description_content_type='text/markdown',
         url='https://bitbucket.itg.ti.com/projects/TINYML-ALGO/repos/tinyml-modeloptimization/browse',
-        author='TinyML, EdgeAI, TIDL & Analytics Algo Teams',
+        author='Tiny ML, EdgeAI, TIDL & Analytics Algo Teams',
         author_email='edgeai-devkit@list.ti.com',
         classifiers=[
             'Development Status :: 4 - Beta'
