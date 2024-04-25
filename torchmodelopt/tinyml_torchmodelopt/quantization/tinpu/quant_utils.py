@@ -79,6 +79,62 @@ class TINPUOffsetScaleShift(torch.nn.Module):
 
 class TINPUQuantizedReplacement:
     @staticmethod
+    def from_child_module(model, start, end):
+        '''
+        copy quant scale, zero_point from child module
+        '''
+        named_modules = dict(model.named_modules())
+        module = named_modules[start.target]
+        if hasattr(module, 'scale') and hasattr(module, 'zero_point'):
+            return module
+
+        named_children = list(module.named_children())
+        if len(named_children) > 0:
+            last_child_name, last_child = named_children[-1]
+            if hasattr(last_child, 'scale') and hasattr(last_child, 'zero_point'):
+                module.scale = last_child.scale
+                module.zero_point = last_child.zero_point
+                return module
+
+        return module
+
+    @staticmethod
+    def _get_scale_zero_point_attrs_from_model(model, node):
+        scale_attr_name = node.name.replace('.', '_') + '_scale_0'
+        zero_point_attr_name = node.name.replace('.', '_') + '_zero_point_0'
+        if hasattr(model, scale_attr_name) and hasattr(model, zero_point_attr_name):
+            scale = getattr(model, scale_attr_name)
+            zero_point = getattr(model, zero_point_attr_name)
+        else:
+            scale = zero_point = None
+        #
+        return scale, zero_point
+
+    @staticmethod
+    def _get_scale_zero_point_from_previous(model, node):
+        named_modules = dict(model.named_modules())
+        prev_node = node.prev
+        prev_module_found = False
+        scale = zero_point = None
+        while not prev_module_found and prev_node:
+            if prev_node.target in named_modules:
+                previous_module = named_modules[prev_node.target]
+                if hasattr(previous_module, 'scale') and hasattr(previous_module, 'zero_point'):
+                    scale = previous_module.scale
+                    zero_point = previous_module.zero_point
+                #
+                return scale, zero_point
+            else:
+                scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, prev_node)
+                if scale is not None and zero_point is not None:
+                    return scale, zero_point
+                #
+            #
+            prev_node = prev_node.prev
+        #
+        return scale, zero_point
+
+    @staticmethod
     def from_q(model, start, end):
         q_node = start
         scale = getattr(model, q_node.args[1].target)
@@ -112,6 +168,31 @@ class TINPUQuantizedReplacement:
         oss_module.scale = qbn_module.scale
         oss_module.zero_point = qbn_module.zero_point
         return oss_module
+
+    @staticmethod
+    def from_module_with_dq(model, start, end):
+        module = dict(model.named_modules())[start.target]
+        # oss_module = __class__.from_dq(model, start.next, end)
+        # seq_module = torch.nn.Sequential(module, oss_module)
+        # seq_module.scale = oss_module.scale
+        # seq_module.zero_point = oss_module.zero_point
+        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start.next)
+        mult_module = MultiplyModule(scale)
+        mult_module.scale = 1.0
+        mult_module.zero_point = 0.0
+        seq_module = torch.nn.Sequential(module, mult_module)
+        seq_module.scale = mult_module.scale
+        seq_module.zero_point = mult_module.zero_point
+        return seq_module
+
+    @staticmethod
+    def from_module_with_q(model, start, end):
+        module = dict(model.named_modules())[start.target]
+        oss_module = __class__.from_q(model, start.next, end)
+        seq_module = torch.nn.Sequential(module, oss_module)
+        seq_module.scale = oss_module.scale
+        seq_module.zero_point = oss_module.zero_point
+        return seq_module
 
     @staticmethod
     def from_qconv_relu(model, start, end, with_relu=True):
@@ -182,25 +263,27 @@ class TINPUQuantizedReplacement:
 
         weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
         weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
+
         # if the previous node is a module, use scale from there.
         # otherwise we have to go back further.
-        if start.prev.target in named_modules and hasattr(named_modules[start.prev.target], 'scale'):
-            input_scale = named_modules[start.prev.target].scale
-            input_zero_point = named_modules[start.prev.target].zero_point
-        else:
-            prev_node = start.prev
-            prev_module_found = False
-            while not prev_module_found and prev_node:
-                if prev_node.target in named_modules and hasattr(named_modules[prev_node.target], 'scale'):
-                    input_scale = named_modules[prev_node.target].scale
-                    input_zero_point = named_modules[prev_node.target].zero_point
-                    prev_module_found = True
-                #
-                if not prev_module_found:
-                    prev_node = prev_node.prev
-                #
-            #
-        #
+        # if start.prev.target in named_modules and hasattr(named_modules[start.prev.target], 'scale'):
+        #     input_scale = named_modules[start.prev.target].scale
+        #     input_zero_point = named_modules[start.prev.target].zero_point
+        # else:
+        #     prev_node = start.prev
+        #     prev_module_found = False
+        #     while not prev_module_found and prev_node:
+        #         if prev_node.target in named_modules and hasattr(named_modules[prev_node.target], 'scale'):
+        #             input_scale = named_modules[prev_node.target].scale
+        #             input_zero_point = named_modules[prev_node.target].zero_point
+        #             prev_module_found = True
+        #         #
+        #         if not prev_module_found:
+        #             prev_node = prev_node.prev
+        #         #
+        #     #
+        # #
+        input_scale, input_zero_point = __class__._get_scale_zero_point_from_previous(model, start)
 
         acc_scale = weight_scale * input_scale
         bias_scale = acc_scale
@@ -236,28 +319,52 @@ class TINPUQuantizedReplacement:
         return __class__.from_qlinear(model, start, end, with_relu=with_relu)
 
     @staticmethod
-    def from_maxpool2d(model, start, end):
-        maxpool2d_module = dict(model.named_modules())[start.target]
-        prev_module = dict(model.named_modules())[start.prev.target]
-        maxpool2d_module.scale = prev_module.scale
-        maxpool2d_module.zero_point = prev_module.zero_point
-        return maxpool2d_module
+    def from_passthrough_module(model, start, end):
+        named_modules = dict(model.named_modules())
+        passthrough_module = named_modules[start.target]
+        if hasattr(passthrough_module, 'scale') and hasattr(passthrough_module, 'zero_point'):
+            return passthrough_module
+
+        scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, start)
+        if scale is not None and zero_point is not None:
+            passthrough_module.scale = scale
+            passthrough_module.zero_point = zero_point
+            return passthrough_module
+
+        if start.prev.target in named_modules:
+            prev_module = named_modules[start.prev.target]
+            passthrough_module.scale = prev_module.scale
+            passthrough_module.zero_point = prev_module.zero_point
+            return passthrough_module
+
+        scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, start.prev)
+        if scale is not None and zero_point is not None:
+            passthrough_module.scale = scale
+            passthrough_module.zero_point = zero_point
+            return passthrough_module
+
+        return passthrough_module
 
     @staticmethod
     def from_dq(model, start, end):
-        prev_module = dict(model.named_modules())[start.prev.target]
         id_module = torch.nn.Identity()
-        id_module.scale = prev_module.scale
+        id_module.scale = 1.0 #prev_module.scale
         id_module.zero_point = 0.0
         return id_module
 
     @staticmethod
     def from_dq_with_dq(model, start, end):
-        id_module = __class__.from_dq(model, start, end)
+        named_modules = dict(model.named_modules())
+        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start)
+        id_module = torch.nn.Identity()
+        id_module.scale = scale
+        id_module.zero_point = 0.0
         mult_module = MultiplyModule(id_module.scale)
+        mult_module.scale = 1.0
+        mult_module.zero_point = 0.0
         output_module = torch.nn.Sequential(id_module, mult_module)
-        output_module.scale = 1.0
-        output_module.zero_point = 0.0
+        output_module.scale = mult_module.scale
+        output_module.zero_point = mult_module.zero_point
         return output_module
 
     # @staticmethod
