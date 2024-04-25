@@ -30,4 +30,4 @@
 #################################################################################
 
 
-from .quant_fx import TINIETinyMLQATFxModule
+from .quant_fx import TINPUTinyMLQATFxModule

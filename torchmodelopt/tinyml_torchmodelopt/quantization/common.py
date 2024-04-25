@@ -37,7 +37,7 @@ import edgeai_torchmodelopt
 class TinyMLQuantizationVersion():
     NO_QUANTIZATION = 0
     QUANTIZATION_GENERIC = 1
-    QUANTIZATION_TINIE = 2
+    QUANTIZATION_TINPU = 2
 
     @classmethod
     def get_dict(cls):
@@ -49,7 +49,7 @@ class TinyMLQuantizationVersion():
 
 
 class TinyMLModelQuantFormat(ModelQuantFormat):
-    TINIE_INT_MODEL = "TINIE_INT_MODEL"
+    TINPU_INT_MODEL = "TINPU_INT_MODEL"
     _NUM_FORMATS_ = ModelQuantFormat._NUM_FORMATS_ + 1
 
 

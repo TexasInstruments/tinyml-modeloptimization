@@ -119,17 +119,17 @@ def quantize_replacement_function(model, pattern, *args, remove_qconfig=True, **
 
     # for qdq model
     # replacement_entries_qdq = [
-    #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEOffsetScaleShift.from_conv_relu_fq),
-    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEOffsetScaleShift.from_fq_bn_fq),
-    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEOffsetScaleShift.from_fq),
+    #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUOffsetScaleShift.from_conv_relu_fq),
+    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUOffsetScaleShift.from_fq_bn_fq),
+    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUOffsetScaleShift.from_fq),
     # }
 
     # for converted model
     replacement_entries_converted = [
-        ([torch.quantize_per_tensor], model_quant_utils.TINIEOffsetScaleShift.from_q),
-        ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], model_quant_utils.TINIEOffsetScaleShift.from_qbn),
-        ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], model_quant_utils.TINIEOffsetScaleShift.from_qconvrelu),
-        (['dequantize'], model_quant_utils.TINIEOffsetScaleShift.from_dq)
+        ([torch.quantize_per_tensor], model_quant_utils.TINPUOffsetScaleShift.from_q),
+        ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], model_quant_utils.TINPUOffsetScaleShift.from_qbn),
+        ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], model_quant_utils.TINPUOffsetScaleShift.from_qconvrelu),
+        (['dequantize'], model_quant_utils.TINPUOffsetScaleShift.from_dq)
     ]
 
     for replacement_pattern, replacement_function in replacement_entries_converted:
@@ -149,10 +149,10 @@ replacement_dict = {
 prepared_model.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(prepared_model.module, replacement_dict)
 
 ##################################################################################
-tinie_onnx_file = 'example_model_tinie.onnx'
-torch.onnx.export(prepared_model, example_input, tinie_onnx_file, opset_version=opset_version)
+ti_npu_onnx_file = 'example_model_ti_npu.onnx'
+torch.onnx.export(prepared_model, example_input, ti_npu_onnx_file, opset_version=opset_version)
 
 # simplify
-prepared_model_onnx = onnx.load(tinie_onnx_file)
+prepared_model_onnx = onnx.load(ti_npu_onnx_file)
 prepared_model_onnx, check = simplify(prepared_model_onnx, skipped_optimizers=['fuse_add_bias_into_conv'])
-onnx.save(prepared_model_onnx, tinie_onnx_file)
+onnx.save(prepared_model_onnx, ti_npu_onnx_file)

@@ -41,7 +41,7 @@ class MultiplyModule(torch.nn.Module):
         return torch.mul(x, self.value)
 
 
-class TINIEOffsetScaleShift(torch.nn.Module):
+class TINPUOffsetScaleShift(torch.nn.Module):
     def __init__(self, offset, mult, shift_mult, quant_min, quant_max, quantize_per_channel=False, use_floor=True, ndim=4, dim=1):
         super().__init__()
         self.quant_min = quant_min
@@ -77,14 +77,14 @@ class TINIEOffsetScaleShift(torch.nn.Module):
         return y
 
 
-class TINIEQuantizedReplacement:
+class TINPUQuantizedReplacement:
     @staticmethod
     def from_q(model, start, end):
         q_node = start
         scale = getattr(model, q_node.args[1].target)
         zero_point = getattr(model, q_node.args[2].target)
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
-        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = scale
         oss_module.zero_point = zero_point
         return oss_module
@@ -108,7 +108,7 @@ class TINIEQuantizedReplacement:
         combined_weight = (qbn_module.weight / bn_sigma) / scale2
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
 
-        oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = qbn_module.scale
         oss_module.zero_point = qbn_module.zero_point
         return oss_module
@@ -153,12 +153,12 @@ class TINIEQuantizedReplacement:
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
         if with_relu:
-            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
             seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         else:
             # this clip is left to -255, 255 here, assuming that there is an Add and ReLU after this.
             # Otherwise it should be -128, 127
-            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
             seq_module = torch.nn.Sequential(conv_module, oss_module)
         #
         seq_module.scale = qconvrelu_module.scale
@@ -221,10 +221,10 @@ class TINIEQuantizedReplacement:
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
 
         if with_relu:
-            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
             seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
         else:
-            oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=2, dim=1)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=2, dim=1)
             seq_module = torch.nn.Sequential(linear_module, oss_module)
         #
         seq_module.scale = qlinear_module.scale
@@ -269,7 +269,7 @@ class TINIEQuantizedReplacement:
     #     oss_offset = torch.tensor(0.0,device=device)
     #     oss_scale = torch.tensor(1.0,device=device)
     #     oss_shift = torch.tensor(1.0,device=device)
-    #     oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
+    #     oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255)
     #     return oss_module
 
     # @staticmethod
@@ -294,7 +294,7 @@ class TINIEQuantizedReplacement:
     #     oss_shift, oss_scale = compute_shift_scale(combined_weight)
     #     oss_offset = bn_bias / scale2 + zero_point2 + zero_point_offset_for_activation
     #
-    #     oss_module = TINIEOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
+    #     oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127)
     #     return oss_module
 
     # @staticmethod

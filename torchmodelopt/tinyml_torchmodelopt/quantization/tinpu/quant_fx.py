@@ -36,7 +36,7 @@ from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat, GenericT
 from . import quant_utils
 
 
-class TINIETinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
+class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def __init__(self, *args, qconfig_type=None, **kwargs):
         if qconfig_type is None:
             # there are multiple ways to specify qconfig_type - one is to use a dictionary like this.
@@ -47,20 +47,20 @@ class TINIETinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         #
         super().__init__(*args, qconfig_type=qconfig_type, **kwargs)
 
-    def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, output_dequantize=False, **kwargs):
+    def convert(self, *args, model_quant_format=TinyMLModelQuantFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
         super().convert(*args, **kwargs)
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: \
             self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         
         # then apply the transformation to required output format
-        if model_quant_format == TinyMLModelQuantFormat.TINIE_INT_MODEL:
+        if model_quant_format == TinyMLModelQuantFormat.TINPU_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,
                                     replacement_dict={'replace_types1': _convert_replacement_func})
         #
         return self
 
-    def export(self, *args, model_quant_format=TinyMLModelQuantFormat.TINIE_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
+    def export(self, *args, model_quant_format=TinyMLModelQuantFormat.TINPU_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
         skipped_optimizers = skipped_optimizers or ['fuse_add_bias_into_conv', 'eliminate_nop_with_unit']
         super().export(*args, model_quant_format=model_quant_format, simplify=simplify,
                        skipped_optimizers=skipped_optimizers, **kwargs)
@@ -97,29 +97,29 @@ class TINIETinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
 
         # for qdq model
         # replacement_entries_qdq = [
-        #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_conv_relu_fq),
-        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_fq_bn_fq),
-        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINIEQuantizedReplacement.from_fq),
+        #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_conv_relu_fq),
+        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_fq_bn_fq),
+        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_fq),
         # }
 
         # for converted model
         if with_input_batchnorm:
             first_entry = [
-                ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINIEQuantizedReplacement.from_q_qbn)
+                ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINPUQuantizedReplacement.from_q_qbn)
             ]
         else:
             first_entry = [
-                ([torch.quantize_per_tensor, torch.nn.Identity], quant_utils.TINIEQuantizedReplacement.from_q_id),
-                ([torch.quantize_per_tensor], quant_utils.TINIEQuantizedReplacement.from_q)
+                ([torch.quantize_per_tensor, torch.nn.Identity], quant_utils.TINPUQuantizedReplacement.from_q_id),
+                ([torch.quantize_per_tensor], quant_utils.TINPUQuantizedReplacement.from_q)
             ]
 
         # for converted model
         replacement_entries_converted = first_entry + [
-            ([torch.nn.MaxPool2d], quant_utils.TINIEQuantizedReplacement.from_maxpool2d),
-            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINIEQuantizedReplacement.from_qconv_relu),
-            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINIEQuantizedReplacement.from_qlinear_relu),
-            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINIEQuantizedReplacement.from_qlinear),
-            (['dequantize'], quant_utils.TINIEQuantizedReplacement.from_dq_with_dq if output_dequantize else quant_utils.TINIEQuantizedReplacement.from_dq)
+            ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_maxpool2d),
+            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
+            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINPUQuantizedReplacement.from_qlinear_relu),
+            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINPUQuantizedReplacement.from_qlinear),
+            (['dequantize'], quant_utils.TINPUQuantizedReplacement.from_dq_with_dq if output_dequantize else quant_utils.TINPUQuantizedReplacement.from_dq)
         ]
 
         for replacement_pattern, replacement_function in replacement_entries_converted:
