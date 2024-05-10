@@ -3,7 +3,7 @@ import edgeai_torchmodelopt.xmodelopt.quantization.v2.quant_fx_base
 import torch
 
 
-def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=1, print_mse=False):
+def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
     weight_abs = weight.abs()
     weight_sign = weight.sign()
     scale_max = (2**num_bits_scale)-1
@@ -15,7 +15,14 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=8, num_bits_scale=
     scale[mask] = 0
     shift[mask] = 1
 
-    assert(torch.sum(scale > scale_max) == 0)
+    if torch.sum(scale > scale_max) != 0:
+        raise RuntimeError(
+            f"Error in Quant convert(). Weight that could not be quantized. Invalid weight value: {weight.cpu().numpy()} \n"
+            f"Make sure that the model is trained properly with good hyper parameters. "
+            f"(try adjusting: training epochs, learning rate QAT after float training etc): \n"
+        )
+    #
+
     scale = weight_sign*torch.round(scale)
     shift_mult = torch.pow(torch.tensor([2.0]), -shift)
 
@@ -232,7 +239,7 @@ class TINPUQuantizedReplacement:
         # conv_module.bias.data.copy_(qbias)
         relative_scale = (qconvrelu_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
         if with_relu:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
             seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
@@ -301,7 +308,7 @@ class TINPUQuantizedReplacement:
         # conv_module.bias.data.copy_(qbias)
         relative_scale = (qlinear_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qlinear_module.scale).float()
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult), num_bits_shift=15)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
 
         if with_relu:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
