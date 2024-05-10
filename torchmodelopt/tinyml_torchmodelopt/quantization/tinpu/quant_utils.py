@@ -43,7 +43,7 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
 
     # add round offset to the offset. since the offset is before the scale, divide it by scale before adding
     shift_round_offset = torch.pow(torch.tensor([2.0]), (shift-1)) / scale
-    offset = torch.floor(offset + shift_round_offset)
+    offset = torch.round(offset + shift_round_offset)
 
     return offset, scale, shift_mult
 
@@ -169,20 +169,20 @@ class TINPUQuantizedReplacement:
     def from_q_qbn(model, start, end):
         qbn_module = dict(model.named_modules())[end.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
-        bn_sigma_inv = 1.0 / bn_sigma
 
         scale2 = qbn_module.scale
         zero_point2 = qbn_module.zero_point
-        # zero_point_offset_for_activation = -128
-        # output_zero_point = + zero_point2 + zero_point_offset_for_activation
 
-        oss_offset = (- qbn_module.running_mean + qbn_module.bias*bn_sigma )
-        combined_weight = (qbn_module.weight / bn_sigma) / scale2
+        oss_offset = (- qbn_module.running_mean + qbn_module.bias*bn_sigma)
+        # first get the effective weight due to batchnorm
+        combined_weight = (qbn_module.weight / bn_sigma)
+        # then modify the weight by output scale so that the output is converted to output scale
+        combined_weight = combined_weight / scale2
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
 
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
-        oss_module.scale = qbn_module.scale
-        oss_module.zero_point = qbn_module.zero_point
+        oss_module.scale = scale2
+        oss_module.zero_point = zero_point2
         return oss_module
 
     @staticmethod
