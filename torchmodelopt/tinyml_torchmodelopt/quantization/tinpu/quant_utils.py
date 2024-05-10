@@ -248,7 +248,7 @@ class TINPUQuantizedReplacement:
         # conv_module.bias.data.copy_(qbias)
         relative_scale = (qconvrelu_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult)
         if with_relu:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
             seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
@@ -317,7 +317,7 @@ class TINPUQuantizedReplacement:
         # conv_module.bias.data.copy_(qbias)
         relative_scale = (qlinear_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qlinear_module.scale).float()
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, torch.tensor(relative_mult))
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult)
 
         if with_relu:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
