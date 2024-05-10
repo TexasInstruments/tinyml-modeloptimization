@@ -4,6 +4,15 @@ import torch
 
 
 def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
+    """
+    Represent offset, weight using add, mult and right shift
+    :param offset: additive offset
+    :param weight: multiplicative weight
+    :param num_bits_shift: number of bits to represent the shift value. this is not the number of bits to shift (which depends on the weight value), but the number of bits to represent the shift value.
+    :param num_bits_scale: number of bits to represent the scale value.
+    :param print_mse:
+    :return:
+    """
     weight_abs = weight.abs()
     weight_sign = weight.sign()
     scale_max = (2**num_bits_scale)-1
@@ -19,7 +28,7 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
         raise RuntimeError(
             f"Error in Quant convert(). Weight that could not be quantized. Invalid weight value: {weight.cpu().numpy()} \n"
             f"Make sure that the model is trained properly with good hyper parameters. "
-            f"(try adjusting: training epochs, learning rate QAT after float training etc): \n"
+            f"(try adjusting: training epochs, learning rate, QAT after float training etc): \n"
         )
     #
 
