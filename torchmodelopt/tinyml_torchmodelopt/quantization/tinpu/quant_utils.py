@@ -26,7 +26,8 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
 
     if torch.sum(scale > scale_max) != 0:
         raise RuntimeError(
-            f"Error in Quant convert(). Weight that could not be quantized. Invalid weight value: {weight.cpu().numpy()} \n"
+            f"Error in Quant convert:compute_offset_scale_shift. Output multipliation could not be converted. \n"
+            f"Invalid in output multipliation value: {weight.cpu().numpy()} \n"
             f"Make sure that the model is trained properly with good hyper parameters. "
             f"(try adjusting: training epochs, learning rate, QAT after float training etc): \n"
         )
@@ -246,7 +247,6 @@ class TINPUQuantizedReplacement:
         qbias = qbias.int_repr()
 
         # conv_module.bias.data.copy_(qbias)
-        relative_scale = (qconvrelu_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult)
         if with_relu:
@@ -315,7 +315,6 @@ class TINPUQuantizedReplacement:
         qbias = qbias.int_repr()
 
         # conv_module.bias.data.copy_(qbias)
-        relative_scale = (qlinear_module.scale / acc_scale).float()
         relative_mult = (acc_scale / qlinear_module.scale).float()
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult)
 
