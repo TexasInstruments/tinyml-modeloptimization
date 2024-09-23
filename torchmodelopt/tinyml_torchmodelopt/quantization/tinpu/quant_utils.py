@@ -211,7 +211,7 @@ class TINPUQuantizedReplacement:
 
     @staticmethod
     def from_qconv_relu(model, start, end, with_relu=True):
-        zero_point_offset_for_activation = -128
+        # zero_point_offset_for_activation = -128
         named_modules = dict(model.named_modules())
 
         qconvrelu_module = named_modules[start.target]
@@ -229,7 +229,7 @@ class TINPUQuantizedReplacement:
         weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
         weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
         input_scale = named_modules[start.prev.target].scale
-        input_zero_point = named_modules[start.prev.target].zero_point
+        # input_zero_point = named_modules[start.prev.target].zero_point
 
         acc_scale = weight_scale * input_scale
         bias_scale = acc_scale
@@ -262,9 +262,9 @@ class TINPUQuantizedReplacement:
 
     @staticmethod
     def from_qlinear(model, start, end, with_relu=False):
-        zero_point_offset_for_activation = -128
+        # zero_point_offset_for_activation = -128
 
-        named_modules = dict(model.named_modules())
+        # named_modules = dict(model.named_modules())
 
         qlinear_module = dict(model.named_modules())[start.target]
         linear_module = torch.nn.Linear(qlinear_module.in_features, qlinear_module.out_features, bias=False)
@@ -367,7 +367,7 @@ class TINPUQuantizedReplacement:
 
     @staticmethod
     def from_dq_with_dq(model, start, end):
-        named_modules = dict(model.named_modules())
+        # named_modules = dict(model.named_modules())
         scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start)
         id_module = torch.nn.Identity()
         id_module.scale = scale

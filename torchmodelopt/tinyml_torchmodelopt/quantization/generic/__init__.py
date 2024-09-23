@@ -29,17 +29,8 @@
 #
 #################################################################################
 
-import copy
-import os.path
 
-import edgeai_torchmodelopt
-import torch
-
-from ..common import (
-    GenericTinyMLQATFxModuleBase,
-    TinyMLModelQuantFormat,
-    TinyMLQuantizationVersion,
-)
+from ..common import GenericTinyMLQATFxModuleBase, TinyMLModelQuantFormat
 
 
 class GenericTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
