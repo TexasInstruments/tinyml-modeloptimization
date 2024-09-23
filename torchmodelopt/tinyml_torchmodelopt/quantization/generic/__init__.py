@@ -32,11 +32,16 @@
 import copy
 import os.path
 
-import torch
 import edgeai_torchmodelopt
-from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat, GenericTinyMLQATFxModuleBase
-    
-    
+import torch
+
+from ..common import (
+    GenericTinyMLQATFxModuleBase,
+    TinyMLModelQuantFormat,
+    TinyMLQuantizationVersion,
+)
+
+
 class GenericTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def __init__(self, model, *args, qconfig_type=None,  **kwargs):
         # qconfig_type = None is equivalent to WC8AT8 (or DEFAULT) which uses per_tensor_affine

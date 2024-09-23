@@ -30,9 +30,14 @@
 #################################################################################
 
 import platform
-import torch
+
 import edgeai_torchmodelopt
-from ..common import TinyMLQuantizationVersion, TinyMLModelQuantFormat, GenericTinyMLQATFxModuleBase
+import torch
+
+from ..common import (
+    GenericTinyMLQATFxModuleBase,
+    TinyMLModelQuantFormat,
+)
 from . import quant_utils
 
 
