@@ -34,12 +34,7 @@ import torch
 
 import edgeai_torchmodelopt
 
-from ..common import (
-    GenericTinyMLQATFxModuleBase,
-    TinyMLQConfigFormat,
-)
-
-from ..common import TinyMLQuantizationVersion, TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
+from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
 from . import quant_utils
 
 

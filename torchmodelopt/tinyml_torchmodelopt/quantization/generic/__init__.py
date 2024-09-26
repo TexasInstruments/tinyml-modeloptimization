@@ -30,10 +30,7 @@
 #################################################################################
 
 
-import torch
-import edgeai_torchmodelopt
-
-from ..common import TinyMLQuantizationVersion, TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
+from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
     
 
 class GenericTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):

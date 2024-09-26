@@ -30,8 +30,6 @@
 #################################################################################
 
 
-import torch
-
 from edgeai_torchmodelopt.xmodelopt.quantization.v2 import QConfigFormat
 import edgeai_torchmodelopt
 
