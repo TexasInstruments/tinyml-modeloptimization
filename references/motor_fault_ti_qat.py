@@ -1,10 +1,12 @@
 # torch imports
-import test
+import enum
+import numpy as np
+from sklearn.metrics import confusion_matrix
 import torch
 import torch.utils
 import torch.nn as nn
 import torch.utils.data
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 
 # ti, onnx imports
 import tinyml_torchmodelopt.quantization as tinpu_quantization  # type: ignore
@@ -14,73 +16,104 @@ import onnxruntime as ort
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class MotorFaultDataset(Dataset):
-    def __init__(self, X, Y):
+    def __init__(self, X, Y, window_length, window_offset, data_format='NHWC'):
         self.x = torch.from_numpy(X).type(torch.FloatTensor)
         self.y = torch.from_numpy(Y).type(torch.LongTensor)
         self.len = self.x.shape[0]
+        self.window_length = window_length
+        self.window_offset = window_offset
+        self.data_format = data_format
 
     def __getitem__(self, index):
-        return self.x[index], self.y[index]
+        start_offset = index*self.window_offset
+        # form a window of input values
+        window_samples_x = self.x[start_offset:start_offset+self.window_length]
+        if self.data_format == 'NHWC':
+            # neural network expects in NCHW, so transpose the data
+            window_samples_x = np.transpose(window_samples_x, (1,0))
+        if len(window_samples_x.shape) == 2:
+            window_samples_x = window_samples_x[...,np.newaxis]
+
+        # form a window of target values
+        window_samples_y = self.y[start_offset:start_offset+self.window_length]
+        # find max occuring target value - we will use that as the y value for this window.
+        window_samples_y = np.bincount(window_samples_y).argmax()
+        return window_samples_x, window_samples_y
 
     def __len__(self):
-        return self.len
+        return (self.len-self.window_offset)//self.window_offset
 
 
 def get_dataset_from_csv(csv_file):
     import pandas as pd
     df = pd.read_csv(csv_file)
     Y = df['Target'].to_numpy()
-    for column in df.columns:
-        df[column] = df[column] / df[column].abs().max()
+    # for column in df.columns:
+    #     df[column] = df[column] / df[column].abs().max()
     X = df[['Vibx', 'Viby', 'Vibz']].to_numpy()
-    return X[:10000], Y[:10000]
+    # X = X[:10000]
+    # Y = Y[:10000]
+    return X, Y
 
 
-def get_dataloader_from_dataset(X, Y):
-    dataset = MotorFaultDataset(X, Y)
-    train_dataset, test_dataset = random_split(dataset, [0.75, 0.25])
-    train_dataloader = DataLoader(dataset=train_dataset, batch_size=32)
-    test_dataloader = DataLoader(dataset=test_dataset, batch_size=32)
+def get_dataloader_from_dataset(X, Y, window_length, window_offset, batch_size):
+    dataset = MotorFaultDataset(X, Y, window_length, window_offset)
+    train_dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
+    test_dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
     return train_dataloader, test_dataloader
 
 
 def train(dataloader, model, loss_fn, optimizer):
     avg_loss = 0
     model.train()
-    for _, (X, y) in enumerate(dataloader):
+    for idx, (X, y) in enumerate(dataloader):
         X, y = X.to(DEVICE), y.to(DEVICE)
         pred = model(X)
+        pred = pred.flatten(start_dim=1)
         loss = loss_fn(pred, y)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        avg_loss += float(loss)
+        avg_loss += loss.item()
     avg_loss = avg_loss/len(dataloader)
     return avg_loss, model, loss_fn, optimizer
 
 
-def get_nn_model(n_in, h1, h2, n_out):
+def get_nn_model(in_channels, hidden_channels, out_channels):
+    def get_conv_bn_relu(in_channels, out_channels, kernel_size, padding=None, stride=1):
+        padding = padding or (kernel_size[0]//2, kernel_size[1]//2)
+        layers = []
+        layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, padding=padding, stride=stride)]
+        layers += [nn.BatchNorm2d(num_features=out_channels)]
+        layers += [nn.ReLU()]
+        return layers
+    
+    class ReshapeLayer(nn.Module):
+        def forward(self, x):
+            return x.reshape(x.shape[0], -1)
+    
     class NeuralNetwork(nn.Module):
         def __init__(self):
             super().__init__()
-            self.relu = nn.ReLU()
-            self.layer1 = nn.Linear(n_in, h1)
-            self.layer2 = nn.Linear(h1, h2)
-            self.layer3 = nn.Linear(h2, n_out)
-
+            self.in_channels = in_channels
+            layers = []
+            in_ch = in_channels
+            for h_ch in hidden_channels:
+                layers += get_conv_bn_relu(in_ch, h_ch, kernel_size=(5,1), padding=None, stride=(2,1))
+                in_ch = h_ch
+            layers += [nn.AdaptiveAvgPool2d(output_size=(1,1))]
+            layers += [ReshapeLayer()]
+            layers += [nn.Linear(in_ch, out_features=out_channels)]
+            self.layers = nn.Sequential(*layers)
         def forward(self, x):
-            """Specify how data passes through the network."""
-            x = self.layer1(x)
-            x = self.relu(x)
-            x = self.layer2(x)
-            x = self.relu(x)
-            x = self.layer3(x)
+            x = self.layers(x)
             return x
+        
     nn_model = NeuralNetwork().to(DEVICE)
     return nn_model
 
 
-def get_qat_model(nn_model):
+def get_qat_model(nn_model, example_input, total_epochs):
     qconfig_type = {
         'weight': {
             'bitwidth': 8,
@@ -98,21 +131,23 @@ def get_qat_model(nn_model):
 
     # Define the QAT model
     QAT_model = tinpu_quantization.TINPUTinyMLQATFxModule(
-        nn_model, qconfig_type=qconfig_type, total_epochs=5)
+        nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
 
     return QAT_model
 
 
-def train_model(model, dataloader):
+def train_model(model, dataloader, total_epochs, learning_rate):
     loss_fn = torch.nn.CrossEntropyLoss()
-    opti = torch.optim.Adam(params=model.parameters(), lr=0.008)
-    for epoch in range(5):
+    opti = torch.optim.SGD(params=model.parameters(), lr=learning_rate, momentum=0.01, weight_decay=0.001)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opti, total_epochs)
+    for epoch in range(total_epochs):
         loss, model, loss_fn, opti = train(dataloader, model, loss_fn, opti)
+        scheduler.step()
         print(f"Epoch:  {epoch+1}  Loss :  {round(loss, 5)}")
     return model
 
 
-def export_QAT_model(QAT_model, model_name):
+def export_QAT_model(QAT_model, model_name, example_input):
 
     def rename_input_node_for_onnx_model(onnx_model, input_node_name):
         """Rename the node of an ONNX model"""
@@ -129,14 +164,12 @@ def export_QAT_model(QAT_model, model_name):
     QAT_model = QAT_model.convert()
 
     # Export int8 quantized model to onnx.
-    dummy = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
-    QUANTIZED_MODEL = f"{model_name}"
-    QAT_model.export(dummy, QUANTIZED_MODEL)
+    QAT_model.export(example_input, model_name)
 
     # Set input name in the ONNX model to 'input' for consistency with float model
-    load_onnx = onnx.load(QUANTIZED_MODEL)
+    load_onnx = onnx.load(model_name)
     updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
-    onnx.save(updated_model, QUANTIZED_MODEL)
+    onnx.save(updated_model, model_name)
     return updated_model
 
 
@@ -152,43 +185,73 @@ def validate_saved_model(model_name, dataloader):
             total_predictions += 1
             data_point = X[idx].numpy()
             outputs = ort_session.run(None, {"input": data_point})
-            conf_1 = outputs[0][0][0][0]
+            conf_1 = outputs[0].flatten()
             if conf_1.argmax(0) == Y[idx]:
                 correct_predictions += 1
+        
     accuracy = round(correct_predictions*100/total_predictions,5)
     return accuracy
 
-def validate_qat_model(model, test_loader):
+def validate_model(model, test_loader):
     import pandas as pd
-    import numpy as np
 
-    y_pred = model(test_loader.dataset.dataset.x)
-    _, y_pred = torch.max(y_pred.data[0][0], 1)
-    eval_matrix_dropout = (pd.crosstab(test_loader.dataset.dataset.y, y_pred))
+    model.eval()
+    y_target = []
+    y_pred = []
+    for _, (X, y) in enumerate(test_loader):
+        X, y = X.to(DEVICE), y.to(DEVICE)
+        pred = model(X)
+        pred = pred.flatten(start_dim=1)
+        _, pred = torch.max(pred, 1)
+        y_pred.append(pred.cpu().numpy())
+        y_target.append(y.cpu().numpy())
+    
+    y_pred = np.concatenate(y_pred)
+    y_target = np.concatenate(y_target)    
+    classes = np.arange(0,4,1)
+    cf_matrix = confusion_matrix(y_target, y_pred)
+    df_cm = pd.DataFrame(cf_matrix, index = [i for i in classes],
+                     columns = [i for i in classes])
     print("Confusion Matrix")
-    print(eval_matrix_dropout)
+    print(df_cm)
 
     # Accuracy of the model
-    accuracy = np.diag(eval_matrix_dropout).sum()/test_loader.dataset.dataset.y.shape[0]
-    print("Accuracy: ", round(accuracy, 5))
+    accuracy = np.diag(df_cm).sum()/np.array(df_cm).sum()
     return accuracy
 
 if __name__ == '__main__':
 
     MODEL_NAME = "data/motor_fault.onnx"
-    CSV_FILE = "data/dataset.csv"
+    CSV_FILE = "data/motor_fault/motor_fault_dataset_int.csv"
+    NUM_EPOCHS = 50
+    WINDOW_LENGTH = 256
+    WINDOW_OFFSET = WINDOW_LENGTH//2
+    BATCH_SIZE = 128
+    LEARNING_RATE = 0.01
 
     X, Y = get_dataset_from_csv(CSV_FILE)
-    train_loader, test_loader = get_dataloader_from_dataset(X, Y)
+    in_channels = X.shape[-1]
+    num_categories = len(np.unique(Y))
+    print(f"Dataset: Num samples={X.shape[0]}, Num categories={num_categories}")
 
-    nn_model = get_nn_model(n_in=3, h1=24, h2=12, n_out=4)
-    nn_model = train_model(nn_model, train_loader)
+    train_loader, test_loader = get_dataloader_from_dataset(X, Y, WINDOW_LENGTH, WINDOW_OFFSET, BATCH_SIZE)
 
-    qat_model = get_qat_model(nn_model)
-    qat_model = train_model(qat_model, train_loader)
+    nn_model = get_nn_model(in_channels, hidden_channels=[16, 32, 64, 128], out_channels=num_categories)
+    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    accuracy = validate_model(nn_model, test_loader)
+    print("Trained Model Accuracy: ", round(accuracy, 5))
 
-    export_QAT_model(qat_model, MODEL_NAME)
-    accuracy = validate_qat_model(qat_model, test_loader)
+    qat_epochs = max(NUM_EPOCHS//2, 5)
+    example_input, example_target = next(iter(train_loader.dataset))
+    example_input.unsqueeze(0)
+
+    qat_model = get_qat_model(nn_model, example_input=example_input, total_epochs=qat_epochs)
+    qat_learning_rate = LEARNING_RATE/10
+    qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
+    accuracy = validate_model(qat_model, test_loader)
+    print("QAT Model Accuracy: ", round(accuracy, 5))
+
+    export_QAT_model(qat_model, MODEL_NAME, example_input)
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
-    print(accuracy)
+    print("Export ONNX QAT Model Accuracy: ", round(accuracy, 5))
     exit()
