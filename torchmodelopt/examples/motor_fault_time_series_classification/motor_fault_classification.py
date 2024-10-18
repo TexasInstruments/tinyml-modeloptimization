@@ -238,8 +238,8 @@ def validate_model(model, test_loader):
 
 if __name__ == '__main__':
 
-    MODEL_NAME = "data/motor_fault.onnx"
-    CSV_FILE = "data/motor_fault/motor_fault_dataset_int.csv"
+    MODEL_NAME = "motor_fault.onnx"
+    CSV_FILE = "motor_fault_dataset_int.csv"
     NUM_EPOCHS = 50
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//2
