@@ -261,7 +261,7 @@ if __name__ == '__main__':
     example_input, example_target = next(iter(train_loader))
     example_input = example_input[:1]
 
-    nn_model = get_nn_model(in_channels, hidden_channels=[8, 16, 32], feature_size=(4,1), out_channels=num_categories)
+    nn_model = get_nn_model(in_channels, hidden_channels=[8, 16, 24, 32], feature_size=(4,1), out_channels=num_categories)
     torchinfo.summary(nn_model, input_data=example_input)
 
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
