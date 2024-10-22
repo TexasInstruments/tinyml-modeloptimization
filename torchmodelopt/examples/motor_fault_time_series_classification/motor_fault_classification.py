@@ -209,7 +209,7 @@ def train_model(model, dataloader, total_epochs, learning_rate):
     """
     # loss_fn for multiclass classification
     loss_fn = torch.nn.CrossEntropyLoss()
-    # SGD is best optimiser for motorfault classification
+    # SGD is the preferable optimiser if QAT needs to be done
     opti = torch.optim.SGD(params=model.parameters(), lr=learning_rate, momentum=0.01, weight_decay=0.001)
     # vary the learning rate as per the lr_scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opti, total_epochs)
