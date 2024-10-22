@@ -260,7 +260,7 @@ def export_model(nn_model, example_input, model_name):
     return updated_model
 
 
-def validate_model(model, test_loader, num_categories):
+def validate_model(model, test_loader, num_categories, categories_name):
     """
     The function takes the model (torch model or qat wrapped torch model), torch dataloader
     and the num_categories to give the confusion matrix and accuracy of the model.
@@ -281,7 +281,6 @@ def validate_model(model, test_loader, num_categories):
     y_pred = np.concatenate(y_pred)
     y_target = np.concatenate(y_target)
     categories_idx = np.arange(0, num_categories, 1)
-    categories_name = ['Normal', 'Localized', 'Erosion', 'Flaking']
     # create a confusion matix
     cf_matrix = confusion_matrix(y_target, y_pred)
     df_cm = pd.DataFrame(cf_matrix, index=[categories_name[i] for i in categories_idx],
@@ -327,6 +326,7 @@ if __name__ == '__main__':
 
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
+    CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
     NUM_EPOCHS = 25
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
@@ -335,10 +335,12 @@ if __name__ == '__main__':
     ENABLE_QAT = True  # False
 
     X, Y = get_dataset_from_csv(CSV_FILE)
+
     # number of columns in X to be trained
     IN_CHANNELS = X.shape[-1]
-    # number of categories in which MF is to be classified
+    # number of categories to be classified into
     NUM_CATEGORIES = len(np.unique(Y))
+    assert len(CATEGORIES_NAME) == NUM_CATEGORIES, "Incorrect number of catgories"
     print(f"Dataset: Samples={X.shape[0]}, Categories={NUM_CATEGORIES}")
 
     train_loader, test_loader = get_dataloader(X, Y, WINDOW_LENGTH, WINDOW_OFFSET, BATCH_SIZE)
@@ -352,7 +354,7 @@ if __name__ == '__main__':
     torchinfo.summary(nn_model, input_data=example_input)
 
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
-    accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES)
+    accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
     export_model(nn_model, example_input, MODEL_NAME)
     print(f"Trained Model Accuracy: {round(accuracy, 5)}\n")
 
@@ -361,7 +363,7 @@ if __name__ == '__main__':
         qat_model = get_qat_model(nn_model, example_input=example_input, total_epochs=qat_epochs)
         qat_learning_rate = LEARNING_RATE/10
         qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
-        accuracy = validate_model(qat_model, test_loader, NUM_CATEGORIES)
+        accuracy = validate_model(qat_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
         export_model(qat_model, example_input, MODEL_NAME)
 
