@@ -80,7 +80,7 @@ class TINPUOffsetScaleShift(torch.nn.Module):
         #
 
     def extra_repr(self):
-        return f'offset={self.offset}, mult={self.mult}, shift={self.shift}, quant_min={self.quant_min}, quant_max={self.quant_max}'
+        return f'offset={self.offset}, mult={self.mult}, shift={self.shift_mult}, quant_min={self.quant_min}, quant_max={self.quant_max}'
 
     def forward(self, x):
         y = (x + self.offset) * self.mult

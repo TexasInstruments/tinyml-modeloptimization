@@ -135,6 +135,10 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
         def forward(self, x):
             return x.reshape(x.shape[0], -1)
 
+    class FlattenLayer(torch.nn.Flatten):
+        def forward(self, x):
+            return super().forward(x)
+
     class NeuralNetwork(nn.Module):
         def __init__(self):
             super().__init__()
@@ -157,7 +161,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            layers += [ReshapeLayer()]
+            layers += [ReshapeLayer()] #[FlattenLayer()] #
 
             # linearize the last layer in given out_features
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
@@ -181,9 +185,11 @@ def get_qat_model(nn_model, example_input, total_epochs):
     """
     # Wrap the NN Model inside the QAT Wrapper
     import simple_qconfig
-    qconfig_mapping = simple_qconfig.get_default_qconfig_mapping()
+    qconfig_type = simple_qconfig.get_default_qconfig()
+    qconfig_mapping = simple_qconfig.get_default_qconfig_mapping(qconfig_type)
     
-    QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+    # QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+    QAT_model = tinpu_quantization.TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
     return QAT_model
 
 
@@ -210,43 +216,43 @@ def train_model(model, dataloader, total_epochs, learning_rate):
 
     return model
 
+def rename_input_node_for_onnx_model(onnx_model, input_node_name):
+    """Rename the node of an ONNX model"""
+    # Update graph input name.
+    onnx_model.graph.input[0].name = input_node_name
+    # Update input of the first node also to correspond.
+    onnx_model.graph.node[0].input[0] = input_node_name
+    # Check and write out the updated model
+    onnx.checker.check_model(onnx_model)
+    return onnx_model
 
 def export_model(nn_model, example_input, model_name, with_qat=False):
     """
     Export the model (torch model or qat wrapped torch model) to the given model name
     in the disk. The function requires an example input to save the model.
     """
-    def rename_input_node_for_onnx_model(onnx_model, input_node_name):
-        """Rename the node of an ONNX model"""
-        # Update graph input name.
-        onnx_model.graph.input[0].name = input_node_name
-        # Update input of the first node also to correspond.
-        onnx_model.graph.node[0].input[0] = input_node_name
-        # Check and write out the updated model
-        onnx.checker.check_model(onnx_model)
-        return onnx_model
 
     # Convert PyTorch QDQ layers to TI NPU int8 layers.
     nn_model.to(DEVICE)
 
     if with_qat:
-        if hasattr(nn_model, "convert"):
+        if False: #hasattr(nn_model, "convert"):
             nn_model = nn_model.convert()
         else:
-            nn_model = quantize_fx.convert_fx(nn_model)
+            nn_model.module = quantize_fx.convert_fx(nn_model.module)
 
     if hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
         nn_model.export(example_input, model_name)
     else:
         torch.onnx.export(nn_model, example_input, model_name)
-
+    
     # Set input name in the ONNX model to 'input' for consistency with float model
-    # load_onnx = onnx.load(model_name)
-    # updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
-    # # save the model in disk
-    # onnx.save(updated_model, model_name)
-    # return updated_model
+    load_onnx = onnx.load(model_name)
+    updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
+    # save the model in disk
+    onnx.save(updated_model, model_name)
+    return updated_model
 
 
 def validate_model(model, test_loader, num_categories, categories_name):
@@ -301,7 +307,8 @@ def validate_saved_model(model_name, dataloader):
             # add a new axis at the beginning of data
             data_point = X[idx].numpy()[np.newaxis, ...]
             # classify the data_point
-            outputs = ort_session.run(None, {'x': data_point})
+            # outputs = ort_session.run(None, {'x': data_point})
+            outputs = ort_session.run(None, {'input': data_point})
             conf_1 = outputs[0].flatten()
             # check if the classification is correct
             if conf_1.argmax(0) == Y[idx]:
@@ -310,13 +317,16 @@ def validate_saved_model(model_name, dataloader):
     accuracy = round(correct_predictions/total_predictions, 5)
     return accuracy
 
+def my_tester(model):
+    return model
+
 
 if __name__ == '__main__':
 
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
-    NUM_EPOCHS = 25 #10
+    NUM_EPOCHS = 10 #10
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
     BATCH_SIZE = 64
@@ -351,12 +361,19 @@ if __name__ == '__main__':
         MODEL_NAME = 'qat_' + MODEL_NAME
         qat_epochs = max(NUM_EPOCHS//2, 5)
         qat_model = get_qat_model(nn_model, example_input=example_input, total_epochs=qat_epochs)
+        
         qat_learning_rate = LEARNING_RATE/10
         qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
         accuracy = validate_model(qat_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
+        from edgeai_torchmodelopt.xnn.utils import save_svg_fx, save_svg_pt2e
+        save_svg_fx(qat_model.module, 'MODEL_NAME')
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
+
         # qat_model = quantize_fx.convert_fx(qat_model)
-        export_model(qat_model, example_input, MODEL_NAME, with_qat=True)
+        qat_model = export_model(qat_model, example_input, MODEL_NAME, with_qat=True)
+        my_tester(qat_model)
+
+        
 
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Export ONNX QAT Model Accuracy: {round(accuracy, 5)}")
