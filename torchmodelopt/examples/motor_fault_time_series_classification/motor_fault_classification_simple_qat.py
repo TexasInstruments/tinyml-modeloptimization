@@ -113,7 +113,7 @@ def train(dataloader, model, loss_fn, optimizer):
     return avg_loss, model, loss_fn, optimizer
 
 
-def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, normalize_input=False):
+def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, normalize_input=True):
     """
     Get the torch model using the in_channels, hidden_channels, feature_size, out_channels
     The function will add the conv, bn, relu layers according to the hidden channels.
@@ -161,7 +161,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            layers += [ReshapeLayer()] #[FlattenLayer()] #
+            layers += [ReshapeLayer()] # [FlattenLayer()]
 
             # linearize the last layer in given out_features
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
@@ -236,7 +236,7 @@ def export_model(nn_model, example_input, model_name, with_qat=False):
     nn_model.to(DEVICE)
 
     if with_qat:
-        if False: #hasattr(nn_model, "convert"):
+        if hasattr(nn_model, "convert"):
             nn_model = nn_model.convert()
         else:
             nn_model.module = quantize_fx.convert_fx(nn_model.module)
@@ -326,7 +326,7 @@ if __name__ == '__main__':
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
-    NUM_EPOCHS = 10 #10
+    NUM_EPOCHS = 30 #10
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
     BATCH_SIZE = 64

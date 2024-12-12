@@ -126,13 +126,6 @@ def temp_convert_replacement(module, pattern, *args, output_dequantize=False, **
 
     module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
 
-    # for qdq model
-    # replacement_entries_qdq = [
-    #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_conv_relu_fq),
-    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_fq_bn_fq),
-    #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_fq),
-    # }
-
     # for converted model
     if with_input_batchnorm:
         first_entry = [([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINPUQuantizedReplacement.from_q_qbn)]
@@ -156,13 +149,33 @@ def temp_convert_replacement(module, pattern, *args, output_dequantize=False, **
         ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINPUQuantizedReplacement.from_qlinear),
         (['dequantize'], quant_utils.TINPUQuantizedReplacement.from_dq_with_dq if output_dequantize else quant_utils.TINPUQuantizedReplacement.from_dq),
     ]
-    scales_of_nodes = []
+
+    scales_of_nodes = dict()
+
     for replacement_pattern, replacement_function in replacement_entries_converted:
         matches = simple_chain_searcher(module, replacement_pattern)
         for no_of_module_replaced, (start, end) in enumerate(matches):
             new_fq_module = replacement_function(module, start, end)
-            edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(module, start, end, new_fq_module, no_of_module_replaced, scales_of_nodes)
+            edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(module, start, end, new_fq_module, scales_of_nodes, no_of_module_replaced)
     
+    nodes = list(module.graph.nodes)
+    # print(scales_of_nodes)
+
+    def recur_args(node):
+        for arg in node.args:
+            if str(arg) in scales_of_nodes.keys():
+                return scales_of_nodes[str(arg)]
+        for arg in node.args:
+            return recur_args(arg)
+        return 1
+    
+    for node in nodes:
+        if str(node) not in scales_of_nodes.keys():
+            scales_of_nodes[str(node)] = recur_args(node)
+
+    # print(scales_of_nodes)
+    # print(nodes)
+
     return module
 
 class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
