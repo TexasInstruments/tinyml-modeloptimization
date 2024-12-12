@@ -161,7 +161,8 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            layers += [ReshapeLayer()] # [FlattenLayer()]
+            # layers += [FlattenLayer()] 
+            layers += [ReshapeLayer()] 
 
             # linearize the last layer in given out_features
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
@@ -326,7 +327,7 @@ if __name__ == '__main__':
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
-    NUM_EPOCHS = 30 #10
+    NUM_EPOCHS = 10 #10
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
     BATCH_SIZE = 64

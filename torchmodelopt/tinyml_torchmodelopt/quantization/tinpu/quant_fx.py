@@ -151,15 +151,19 @@ def temp_convert_replacement(module, pattern, *args, output_dequantize=False, **
     ]
 
     scales_of_nodes = dict()
+    nodes = list(module.graph.nodes)
 
     for replacement_pattern, replacement_function in replacement_entries_converted:
+        # if replacement_pattern[0].__name__ == 'Flatten':
+        #     matches = []
         matches = simple_chain_searcher(module, replacement_pattern)
         for no_of_module_replaced, (start, end) in enumerate(matches):
             new_fq_module = replacement_function(module, start, end)
             edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(module, start, end, new_fq_module, scales_of_nodes, no_of_module_replaced)
     
     nodes = list(module.graph.nodes)
-    # print(scales_of_nodes)
+    print(nodes)
+    print(scales_of_nodes)
 
     def recur_args(node):
         for arg in node.args:
@@ -173,8 +177,7 @@ def temp_convert_replacement(module, pattern, *args, output_dequantize=False, **
         if str(node) not in scales_of_nodes.keys():
             scales_of_nodes[str(node)] = recur_args(node)
 
-    # print(scales_of_nodes)
-    # print(nodes)
+    print(scales_of_nodes)
 
     return module
 
@@ -194,7 +197,6 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: \
             self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
-
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module,

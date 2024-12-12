@@ -64,7 +64,7 @@ class SimplePerChannelWeightObserver(torch.ao.quantization.PerChannelMinMaxObser
         return x_orig
 
 
-class SimpleActivationObserver(torch.ao.quantization.HistogramObserver):
+class SimpleActivationObserver(torch.ao.quantization.MovingAverageMinMaxObserver):
     def __init__(self, *args, quant_min=0, quant_max=255, qscheme=torch.per_tensor_affine, power2_scale=True, **kwargs):
         super().__init__(*args, quant_min=quant_min, quant_max=quant_max, qscheme=qscheme, **kwargs)
 		# activation quantization cannot use torch.per_channel_symmetric, it has to be torch.per_tensor_symmetric
