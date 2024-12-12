@@ -1,5 +1,6 @@
 import torch
-
+from torch import fx
+from torch.fx import GraphModule
 
 def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
     """
@@ -46,6 +47,78 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
 
     return offset, scale, shift_mult
 
+def propagate_quant_args_after_flatten(main_module : GraphModule) -> GraphModule:
+    """
+    Propagates scale and zero point arguments into a torch.quantize_per_tensor
+    after a Flatten layer. Simplifies the graph to assist TI-NPU quant conversion
+    pattern-matching (_convert_replacement in quant_fx.py).
+    :main_module: input GraphModule
+    :return: the transformed GraphModule
+    """
+    main_interpret = torch.fx.Interpreter(main_module)
+    main_module_nodes:list[fx.Node] = list(main_module.graph.nodes)
+    modules_in_main_graph = dict(main_module.named_modules())
+    main_module_node_num = len(main_module_nodes)
+    main_index = 0
+    while main_index < main_module_node_num:
+        main_node = main_module_nodes[main_index]
+        if (main_node.op == 'call_module' and \
+            isinstance(modules_in_main_graph[main_node.target],torch.nn.Flatten)):
+            if main_node.next.op == 'get_attr' and 'scale_0' in main_node.next.target and \
+               main_node.next.next.op == 'get_attr' and \
+               'zero_point_0' in main_node.next.next.target and \
+               main_node.next.next.next.op == 'call_function' and \
+               main_node.next.next.next.target == torch.quantize_per_tensor:
+                scale_node = main_node.next
+                zerop_node = main_node.next.next
+                quant_node = zerop_node.next
+                scale = main_interpret.run_node(scale_node)
+                zerop = main_interpret.run_node(zerop_node)
+                quant_node.update_arg(1, scale)
+                quant_node.update_arg(2, zerop)
+                main_module.graph.erase_node(scale_node)
+                main_module.graph.erase_node(zerop_node)
+        main_index +=1
+    main_module.graph.lint()
+    main_module.recompile()
+    return main_module
+
+def swap_flatten_quant(main_module : GraphModule) -> GraphModule:
+    """
+    Rewrite (Flatten, torch.quantize_per_tensor) as (torch.quantize_per_tensor, Flatten) so that
+    the input to the Flatten layer is quantized. This arrangement is more optimal for model
+    compilation and inference.
+    :main_module: input GraphModule
+    :returns: the transformed GraphModule
+    precondition: propagate_quant_args_after_flatten
+    """
+    main_module_nodes:list[fx.Node] = list(main_module.graph.nodes)
+    modules_in_main_graph = dict(main_module.named_modules())
+    main_module_node_num = len(main_module_nodes)
+    main_index = 0
+    while main_index < main_module_node_num:
+        main_node = main_module_nodes[main_index]
+        if main_node.op == 'call_module' and \
+            isinstance(modules_in_main_graph[main_node.target],torch.nn.Flatten):
+            assert main_index > 0 , "Internal ERROR: torch.nn.Flatten is input to graph"
+            use_keys = list(main_node.users.keys())
+            if len(use_keys) == 1 and torch.quantize_per_tensor == use_keys[0].target:
+                flatten_input_node = main_module_nodes[main_index-1]
+                orig_quant_node = use_keys[0]
+                with main_module.graph.inserting_after(flatten_input_node):
+                    new_quant_node = main_module.graph.call_function(torch.quantize_per_tensor,\
+                                            args=(main_node.args[0],) + orig_quant_node.args[1:],\
+                                                    kwargs=orig_quant_node.kwargs)
+                    main_node.replace_input_with(old_input=flatten_input_node,\
+                                                 new_input=new_quant_node)
+                    orig_quant_node.replace_all_uses_with(main_node)
+                main_module.graph.erase_node(orig_quant_node)
+                assert flatten_input_node.next == new_quant_node, \
+                    "Internal ERROR: incorrect swap_flatten_quant transformation"
+        main_index +=1
+    main_module.graph.lint()
+    main_module.recompile()
+    return main_module
 
 class MultiplyModule(torch.nn.Module):
     def __init__(self, value):
@@ -152,8 +225,11 @@ class TINPUQuantizedReplacement:
     @staticmethod
     def from_q(model, start, end):
         q_node = start
-        scale = getattr(model, q_node.args[1].target)
-        zero_point = getattr(model, q_node.args[2].target)
+        scale = q_node.args[1]
+        zero_point = q_node.args[2]
+        if hasattr(q_node.args[1], "target") and hasattr(q_node.args[2], "target"):
+            scale = getattr(model, q_node.args[1].target)
+            zero_point = getattr(model, q_node.args[2].target)
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = scale
@@ -183,6 +259,21 @@ class TINPUQuantizedReplacement:
         oss_module.scale = scale2
         oss_module.zero_point = zero_point2
         return oss_module
+
+    @staticmethod
+    def from_flatten_with_q(model, start, end):
+        """
+        Set scale and zero point of a Flatten module.
+        dequantize, torch.quantize_per_tensor, torch.nn.Flatten
+        -> torch.nn.Flatten
+        """
+        module = dict(model.named_modules())[end.target]
+        q_node =start.next
+        scale = q_node.args[1]
+        zero_point = q_node.args[2]
+        module.scale = scale
+        module.zero_point = zero_point
+        return module
 
     @staticmethod
     def from_module_with_dq(model, start, end):

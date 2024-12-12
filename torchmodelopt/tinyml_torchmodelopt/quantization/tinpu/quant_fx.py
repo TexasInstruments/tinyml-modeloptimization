@@ -52,6 +52,9 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def convert(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
         super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
+        # Adjust QDQ graph to assist TI-NPU conversion for torch.nn.Flatten
+        self.module = quant_utils.propagate_quant_args_after_flatten(self.module)
+        self.module = quant_utils.swap_flatten_quant(self.module)
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: \
             self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
 
@@ -104,12 +107,13 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # }
 
         # for converted model
+        first_entry =  [(['dequantize', torch.quantize_per_tensor, torch.nn.modules.flatten.Flatten], quant_utils.TINPUQuantizedReplacement.from_flatten_with_q)]
         if with_input_batchnorm:
-            first_entry = [
+            first_entry += [
                 ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINPUQuantizedReplacement.from_q_qbn)
             ]
         else:
-            first_entry = [
+            first_entry += [
                 ([torch.quantize_per_tensor, torch.nn.Identity], quant_utils.TINPUQuantizedReplacement.from_q_id),
                 ([torch.quantize_per_tensor], quant_utils.TINPUQuantizedReplacement.from_q)
             ]
@@ -126,7 +130,6 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINPUQuantizedReplacement.from_qlinear_relu),
-            ([torch.nn.Flatten, 'quantize_per_tensor'], quant_utils.TINPUQuantizedReplacement.from_module_with_q),
             ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINPUQuantizedReplacement.from_qlinear),
             (['dequantize'], quant_utils.TINPUQuantizedReplacement.from_dq_with_dq if output_dequantize else quant_utils.TINPUQuantizedReplacement.from_dq),
         ]
