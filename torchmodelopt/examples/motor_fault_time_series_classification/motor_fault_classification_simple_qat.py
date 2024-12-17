@@ -1,5 +1,6 @@
 # torch imports
-from os import listdir
+from ast import Mod
+from typing import Tuple, List
 import torch
 from torch.ao.quantization import quantize_fx
 import torch.utils
@@ -27,7 +28,7 @@ class MotorFaultDataset(Dataset):
     The window will have a single target value which will be of the max occurring target.
     """
 
-    def __init__(self, X, Y, window_length, window_offset, data_format='NHWC'):
+    def __init__(self, X: np.ndarray, Y: np.ndarray, window_length: int, window_offset: int, data_format: str = 'NHWC') -> None:
         self.x = torch.from_numpy(X).type(torch.FloatTensor)
         self.y = torch.from_numpy(Y).type(torch.LongTensor)
         self.len = self.x.shape[0]
@@ -37,7 +38,7 @@ class MotorFaultDataset(Dataset):
         self.window_offset = window_offset
         self.data_format = data_format
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         start_offset = index*self.window_offset
         # form a window of input values
         window_samples_x = self.x[start_offset:start_offset+self.window_length]
@@ -57,7 +58,7 @@ class MotorFaultDataset(Dataset):
         return (self.len-self.window_length)//self.window_offset
 
 
-def get_dataset_from_csv(csv_file, normalize_dataset=False):
+def get_dataset_from_csv(csv_file: str, normalize_dataset: bool = False) -> Tuple[np.ndarray]:
     """
     Read the csv_file to extract the X, Y values.
     normalize_dataset will normalize the column with the max value
@@ -72,7 +73,7 @@ def get_dataset_from_csv(csv_file, normalize_dataset=False):
     return X, Y
 
 
-def get_dataloader(X, Y, window_length, window_offset, batch_size):
+def get_dataloader(X: np.ndarray, Y: np.ndarray, window_length: int, window_offset: int, batch_size: int) -> Tuple[DataLoader]:
     """
     Get the torch dataloaders from the X, Y of the dataset. Create windows in dataset
     with length of window_length, offset of window_offset and batch size of dataloader.
@@ -89,7 +90,7 @@ def get_dataloader(X, Y, window_length, window_offset, batch_size):
     return train_dataloader, test_dataloader
 
 
-def train(dataloader, model, loss_fn, optimizer):
+def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer):
     """
     Train the model (torch model or qat wrapped torch model) with loss_fn, 
     optimizer on the torch train dataloader. Returns the avg loss for training 
@@ -114,14 +115,14 @@ def train(dataloader, model, loss_fn, optimizer):
     return avg_loss, model, loss_fn, optimizer
 
 
-def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, normalize_input=True):
+def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tuple[int], out_channels: int, normalize_input: bool = True) -> nn.Module:
     """
     Get the torch model using the in_channels, hidden_channels, feature_size, out_channels
     The function will add the conv, bn, relu layers according to the hidden channels.
     AdaptiveAvgPool2D is added to reduce the dimension and finally a Linear layer at the last of
     the model
     """
-    def get_conv_bn_relu(in_channels, out_channels, kernel_size, padding=None, stride=1):
+    def get_conv_bn_relu(in_channels: int, out_channels: int, kernel_size, padding=None, stride=1):
         # calculate the padding according to kernel if not provided
         padding = padding or (kernel_size[0]//2, kernel_size[1]//2)
         layers = []
@@ -182,7 +183,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
     return nn_model
 
 
-def get_qat_model(nn_model, example_input, total_epochs):
+def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs: int) -> nn.Module:
     """
     Convert the torch model to qat wrapped torch model. The function requires 
     an example input to convert the model.
@@ -197,7 +198,7 @@ def get_qat_model(nn_model, example_input, total_epochs):
     return QAT_model
 
 
-def train_model(model, dataloader, total_epochs, learning_rate):
+def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, learning_rate: float) -> nn.Module:
     """
     Train the model (torch model or qat wrapped torch model) with the given train dataloader,
     total_epochs and a learning rate which will be used by lr_scheduler. CrossEntropyLoss and
@@ -220,7 +221,7 @@ def train_model(model, dataloader, total_epochs, learning_rate):
 
     return model
 
-def rename_input_node_for_onnx_model(onnx_model, input_node_name):
+def rename_input_node_for_onnx_model(onnx_model: nn.Module, input_node_name: str) -> nn.Module:
     """Rename the node of an ONNX model"""
     # Update graph input name.
     onnx_model.graph.input[0].name = input_node_name
@@ -230,7 +231,7 @@ def rename_input_node_for_onnx_model(onnx_model, input_node_name):
     onnx.checker.check_model(onnx_model)
     return onnx_model
 
-def export_model(nn_model, example_input, model_name, with_qat=False):
+def export_model(nn_model: nn.Module, example_input: torch.Tensor, model_name: str, with_qat: bool = False) -> nn.Module:
     """
     Export the model (torch model or qat wrapped torch model) to the given model name
     in the disk. The function requires an example input to save the model.
@@ -262,7 +263,7 @@ def export_model(nn_model, example_input, model_name, with_qat=False):
     return updated_model
 
 
-def validate_model(model, test_loader, num_categories, categories_name):
+def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: int, categories_name: List[str]) -> float:
     """
     The function takes the model (torch model or qat wrapped torch model), torch dataloader
     and the num_categories to give the confusion matrix and accuracy of the model.
@@ -296,7 +297,7 @@ def validate_model(model, test_loader, num_categories, categories_name):
     return accuracy
 
 
-def validate_saved_model(model_name, dataloader):
+def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     """
     The function takes the saved onnx model, torch test dataloader to give the accuracy of the model.
     """
@@ -325,18 +326,7 @@ def validate_saved_model(model_name, dataloader):
     print()
     return accuracy
 
-def cleanup():
-    import os
-    list_dir = os.listdir()
-    print(list_dir)
-    for file in list_dir:
-        if file.endswith('.svg') or file.endswith('.onnx') or file.endswith('.txt'):
-            os.remove(file)
-    return
-
 if __name__ == '__main__':
-
-    cleanup()
     
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
@@ -363,7 +353,7 @@ if __name__ == '__main__':
     # dataloader returns a batch of input - take the first value output it to get single input for QAT config
     example_input, example_target = next(iter(train_loader))
     example_input = example_input[:1]
-
+    
     nn_model = get_nn_model(IN_CHANNELS, hidden_channels=[8, 16, 32], feature_size=(4, 1), out_channels=NUM_CATEGORIES)
     torchinfo.summary(nn_model, input_data=example_input)
 
