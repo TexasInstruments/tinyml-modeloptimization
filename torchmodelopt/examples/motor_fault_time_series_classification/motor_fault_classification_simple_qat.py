@@ -1,4 +1,5 @@
 # torch imports
+from os import listdir
 import torch
 from torch.ao.quantization import quantize_fx
 import torch.utils
@@ -136,7 +137,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
             return x.reshape(x.shape[0], -1)
 
     class FlattenLayer(torch.nn.Flatten):
-        def forward(self, x):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
             return super().forward(x)
 
     class NeuralNetwork(nn.Module):
@@ -158,10 +159,12 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
 
             # reduces the dimensions of the nn layer to the output_size
             layers += [nn.AdaptiveAvgPool2d(output_size=feature_size)]
+            # layers += [nn.MaxPool2d(kernel_size=(64,1), stride=(18,1))]
+            # layers += [nn.AvgPool2d(kernel_size=(64,1), stride=(18,1))]
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            # layers += [FlattenLayer()] 
+            # layers += [nn.Flatten()] 
             layers += [ReshapeLayer()] 
 
             # linearize the last layer in given out_features
@@ -237,17 +240,20 @@ def export_model(nn_model, example_input, model_name, with_qat=False):
     nn_model.to(DEVICE)
 
     if with_qat:
+        from edgeai_torchmodelopt.xnn.utils import save_svg_fx
         if hasattr(nn_model, "convert"):
             nn_model = nn_model.convert()
+            # save_svg_fx(nn_model.module, 'qat_model_converted')
         else:
-            nn_model.module = quantize_fx.convert_fx(nn_model.module)
+            nn_model = quantize_fx.convert_fx(nn_model.module)
+            save_svg_fx(nn_model, 'qat_model_converted')
 
     if hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
         nn_model.export(example_input, model_name)
     else:
         torch.onnx.export(nn_model, example_input, model_name)
-    
+
     # Set input name in the ONNX model to 'input' for consistency with float model
     load_onnx = onnx.load(model_name)
     updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
@@ -316,14 +322,22 @@ def validate_saved_model(model_name, dataloader):
                 correct_predictions += 1
 
     accuracy = round(correct_predictions/total_predictions, 5)
+    print()
     return accuracy
 
-def my_tester(model):
-    return model
-
+def cleanup():
+    import os
+    list_dir = os.listdir()
+    print(list_dir)
+    for file in list_dir:
+        if file.endswith('.svg') or file.endswith('.onnx') or file.endswith('.txt'):
+            os.remove(file)
+    return
 
 if __name__ == '__main__':
 
+    cleanup()
+    
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
@@ -367,14 +381,12 @@ if __name__ == '__main__':
         qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
         accuracy = validate_model(qat_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         from edgeai_torchmodelopt.xnn.utils import save_svg_fx, save_svg_pt2e
-        save_svg_fx(qat_model.module, 'MODEL_NAME')
+        save_svg_fx(qat_model.module, 'qat_model_unconverted')
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
 
         # qat_model = quantize_fx.convert_fx(qat_model)
         qat_model = export_model(qat_model, example_input, MODEL_NAME, with_qat=True)
-        my_tester(qat_model)
-
-        
+        # save_svg_fx(qat_model, 'qat_model_converted')
 
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Export ONNX QAT Model Accuracy: {round(accuracy, 5)}")
