@@ -164,8 +164,8 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            # layers += [nn.Flatten()] 
-            layers += [ReshapeLayer()] 
+            layers += [FlattenLayer()] 
+            # layers += [ReshapeLayer()] 
 
             # linearize the last layer in given out_features
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
@@ -243,7 +243,7 @@ def export_model(nn_model, example_input, model_name, with_qat=False):
         from edgeai_torchmodelopt.xnn.utils import save_svg_fx
         if hasattr(nn_model, "convert"):
             nn_model = nn_model.convert()
-            # save_svg_fx(nn_model.module, 'qat_model_converted')
+            save_svg_fx(nn_model.module, 'qat_model_converted')
         else:
             nn_model = quantize_fx.convert_fx(nn_model.module)
             save_svg_fx(nn_model, 'qat_model_converted')
@@ -341,7 +341,7 @@ if __name__ == '__main__':
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
-    NUM_EPOCHS = 10 #10
+    NUM_EPOCHS = 25 #10
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
     BATCH_SIZE = 64

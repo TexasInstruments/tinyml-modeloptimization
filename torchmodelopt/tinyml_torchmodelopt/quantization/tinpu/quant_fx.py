@@ -31,10 +31,11 @@
 
 import platform
 import torch
-from torch.fx import GraphModule
-from typing import List, Tuple
 import types
 import operator
+
+from torch.fx import GraphModule
+from typing import List, Tuple
 
 import edgeai_torchmodelopt
 
@@ -88,6 +89,7 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
         both_node_equal = is_both_node_equal(main_module_node, pattern_type_node)
         if both_node_equal:
             if main_module_node == pattern_type[0] and next_match == -1 and pattern_type_idx != 0:
+                # if another pattern is matching inside the current matching pattern
                 next_match = main_module_idx
             if pattern_type_idx == 0:
                 # Node is matched with 1st node of pattern
@@ -227,13 +229,10 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         replacement_rules = self.replacement_rules(is_batch_normalized, output_dequantize)
         # Give each module a unique module_no
         module_no = 0
-        print(list(module.graph.nodes))
         # Replace the patterns using the replacement function
         for replacement_pattern, replacement_function in replacement_rules:
             matches = simple_chain_searcher(module, replacement_pattern)
             for (start, end) in matches:
                 replacement_function(module, start, end, module_no)
                 module_no += 1
-        print(list(module.graph.nodes))
-
         return module
