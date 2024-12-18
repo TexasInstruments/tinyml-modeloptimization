@@ -94,7 +94,7 @@ def remove_hanging_nodes(main_module: GraphModule) -> None:
     main_module.graph.lint()
     main_module.recompile()
 
-    return
+    return None
 
 
 def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, start: Node, end: Node) -> None:
@@ -119,7 +119,7 @@ def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, s
     ptr.replace_all_uses_with(new_node)
     main_module.graph.erase_node(end)
 
-    return
+    return None
 
 
 def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
@@ -163,7 +163,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
         # Remove all the intermediate call module nodes
         remove_intermediate_call_modules(main_module, new_node, start, end)
 
-    return
+    return None
 
 
 def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
@@ -189,7 +189,7 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     main_module.graph.lint()
     main_module.recompile()
     remove_hanging_nodes(main_module)
-    return
+    return None
 
 class ReduceSum(torch.nn.Module):
     def forward(self, x):
@@ -203,10 +203,8 @@ class MultiplyModule(torch.nn.Module):
     def __init__(self, value):
         super().__init__()
         self.value = value
-
     def forward(self, x):
         return torch.mul(x, self.value)
-
 
 class TINPUOffsetScaleShift(torch.nn.Module):
     def __init__(self, offset, mult, shift_mult, quant_min, quant_max, quantize_per_channel=False, use_floor=True, ndim=4, dim=1):
@@ -502,7 +500,7 @@ class TINPUQuantizedReplacement:
 
         replace_call_module(model, start, end, replace_module, module_no)
         return None
-    
+
     @staticmethod
     def from_flatten(model, start, end, module_no=0):
         named_modules = dict(model.named_modules())
@@ -520,12 +518,18 @@ class TINPUQuantizedReplacement:
 
     @staticmethod
     def from_dq(model, start, end, module_no=0):
-        # if start.next.target != 'output':
-        #     return __class__.from_dq_with_dq(model, start, end, module_no)
         id_module = torch.nn.Identity()
         id_module.scale = 1.0
         id_module.zero_point = 0.0
         replace_call_function_or_method(model, start, end, id_module, module_no)
+        return None
+    
+    @staticmethod
+    def from_dq_flatten(model, start, end, module_no=0):
+        dq_node = start
+        flatten_node = end
+        __class__.from_dq(model, dq_node, dq_node, module_no)
+        __class__.from_flatten(model, flatten_node, flatten_node, module_no)
         return None
 
     @staticmethod
@@ -585,15 +589,15 @@ class TINPUQuantizedReplacement:
             return __class__.from_passthrough_module(model, start, end, module_no)
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor((total_kernel_area+1)//2), torch.tensor(1 / total_kernel_area), num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
-        # Round Module
-        round_module = RoundModule()
         # ReduceSum Module
         reduce_sum_module = ReduceSum()
+        # Round Module
+        round_module = RoundModule()
         # Sequential Module comprising of Reduce, Round, OSS
         output_module = torch.nn.Sequential(reduce_sum_module, round_module, oss_module)
         output_module.scale = scale
         output_module.zero_point = zero_point
-        # Replace AdaptiveAvgPool2
+        # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
         replace_call_module(model, start, end, output_module, module_no)
         return None
     

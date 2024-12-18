@@ -122,7 +122,7 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
     AdaptiveAvgPool2D is added to reduce the dimension and finally a Linear layer at the last of
     the model
     """
-    def get_conv_bn_relu(in_channels: int, out_channels: int, kernel_size, padding=None, stride=1):
+    def get_conv_bn_relu(in_channels: int, out_channels: int, kernel_size: Tuple[int], padding=None, stride=1):
         # calculate the padding according to kernel if not provided
         padding = padding or (kernel_size[0]//2, kernel_size[1]//2)
         layers = []
@@ -137,9 +137,9 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
         def forward(self, x):
             return x.reshape(x.shape[0], -1)
 
-    class FlattenLayer(torch.nn.Flatten):
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return super().forward(x)
+    # class FlattenLayer(torch.nn.Flatten):
+    #     def forward(self, x: torch.Tensor) -> torch.Tensor:
+    #         return super().forward(x)
 
     class NeuralNetwork(nn.Module):
         def __init__(self):
@@ -165,7 +165,7 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            layers += [FlattenLayer()] 
+            layers += [nn.Flatten()] 
             # layers += [ReshapeLayer()] 
 
             # linearize the last layer in given out_features
@@ -231,7 +231,7 @@ def rename_input_node_for_onnx_model(onnx_model: nn.Module, input_node_name: str
     onnx.checker.check_model(onnx_model)
     return onnx_model
 
-def export_model(nn_model: nn.Module, example_input: torch.Tensor, model_name: str, with_qat: bool = False) -> nn.Module:
+def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qat: bool = False) -> nn.Module:
     """
     Export the model (torch model or qat wrapped torch model) to the given model name
     in the disk. The function requires an example input to save the model.
@@ -326,8 +326,16 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     print()
     return accuracy
 
+def cleanup():
+    import os
+    files = os.listdir()
+    for file in files:
+        if file.endswith('.onnx') or file.endswith('.svg'):
+            os.remove(file)
+    return
+
 if __name__ == '__main__':
-    
+    cleanup()
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
@@ -374,9 +382,7 @@ if __name__ == '__main__':
         save_svg_fx(qat_model.module, 'qat_model_unconverted')
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
 
-        # qat_model = quantize_fx.convert_fx(qat_model)
         qat_model = export_model(qat_model, example_input, MODEL_NAME, with_qat=True)
-        # save_svg_fx(qat_model, 'qat_model_converted')
 
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Export ONNX QAT Model Accuracy: {round(accuracy, 5)}")

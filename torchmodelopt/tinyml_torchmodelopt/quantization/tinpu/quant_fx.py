@@ -158,8 +158,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
 
     def is_batch_normalized(self, module: GraphModule) -> bool:
         named_modules = dict(module.named_modules())
-        batch_norm_modules = (
-            torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d, torch.nn.BatchNorm2d)
+        batch_norm_modules = (torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d, torch.nn.BatchNorm2d)
         for name_entry, module_entry in named_modules.items():
             if len(list(module_entry.parameters(recurse=False))) > 0 and isinstance(module_entry, batch_norm_modules):
                 return True
@@ -167,7 +166,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     
     def get_scales_of_nodes(module: GraphModule, scales_of_nodes: List[float]) -> List[float]:
         
-        def recur_args(node) -> float:
+        def recur_args(node: torch.Node) -> float:
             bfs = [arg for arg in node.args]
             for node in bfs:
                 if str(node) in scales_of_nodes.keys():
@@ -201,8 +200,8 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_adaptiveavgpool2d),   # OSS required
             ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),          # OSS not required
             # Flatten Modules
-            ([torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_flatten),                       # Removes quantization
-            (['flatten'], quant_utils.TINPUQuantizedReplacement.from_flatten),                              # Removes quantization
+            (['dequantize',torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),                       # Removes quantization
+            # (['flatten'], quant_utils.TINPUQuantizedReplacement.from_flatten),                              # Removes quantization
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
             # LinearRelu Module
@@ -230,9 +229,11 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # Give each module a unique module_no
         module_no = 0
         # Replace the patterns using the replacement function
+        # print(list(module.graph.nodes))
         for replacement_pattern, replacement_function in replacement_rules:
             matches = simple_chain_searcher(module, replacement_pattern)
             for (start, end) in matches:
                 replacement_function(module, start, end, module_no)
                 module_no += 1
+        # print(list(module.graph.nodes))
         return module
