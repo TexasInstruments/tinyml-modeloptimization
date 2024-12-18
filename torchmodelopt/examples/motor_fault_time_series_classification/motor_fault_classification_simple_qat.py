@@ -148,6 +148,7 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
             layers = []
             if normalize_input:
                 # normalize the input with input features as in_channels
+                # layers += [nn.Flatten()] 
                 layers += [nn.BatchNorm2d(num_features=in_channels)]
             else:
                 layers += [nn.Identity()]

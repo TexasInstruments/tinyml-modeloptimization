@@ -2,6 +2,8 @@ import torch
 from torch.fx import GraphModule, Node, symbolic_trace
 from typing import Dict, List
 
+from tinyml_torchmodelopt import quantization
+
 def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
     """
     Represent offset, weight using add, mult and right shift
@@ -531,7 +533,29 @@ class TINPUQuantizedReplacement:
         __class__.from_dq(model, dq_node, dq_node, module_no)
         __class__.from_flatten(model, flatten_node, flatten_node, module_no)
         return None
+    
+    @staticmethod
+    def from_x_flatten(model, start, end, module_no=0):
+        # Flatten Module
+        flatten_node = end
+        # Quantization Params for OSS Module
+        quantization_node = end.next.next.next
+        scale = quantization_node.args[1]
+        zero_point = quantization_node.args[2]
+        __class__.from_flatten(model, flatten_node, flatten_node, module_no)
 
+        # OSS Module
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point, scale, num_bits_scale=8)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_module.scale = scale
+        oss_module.zero_point = zero_point
+        flatten_module = torch.nn.Flatten(*end.args[1:])
+        seq_module = torch.nn.Sequential(oss_module, flatten_module)
+
+        # Remove the scale, zero_point, quantize method and flatten layer with Seq Module
+        replace_call_module(model, end, end, seq_module, module_no)
+        return None
+    
     @staticmethod
     def from_dq_with_dq(model, start, end, module_no=0):
         scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start)

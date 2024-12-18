@@ -196,12 +196,12 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.Sequential],quant_utils.TINPUQuantizedReplacement.from_child_module),
             ([torch.nn.Module], quant_utils.TINPUQuantizedReplacement.from_child_module),
             # Pooling Modules
-            ([torch.nn.AvgPool2d], quant_utils.TINPUQuantizedReplacement.from_avgpool2d),                   # OSS required
+            ([torch.nn.AvgPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),                   # OSS required
             ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_adaptiveavgpool2d),   # OSS required
             ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),          # OSS not required
             # Flatten Modules
-            (['dequantize',torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),                       # Removes quantization
-            # (['flatten'], quant_utils.TINPUQuantizedReplacement.from_flatten),                              # Removes quantization
+            (['dequantize', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),        # Removes quantization
+            # (['x', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_x_flatten),                  # Replaces quantization
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
             # LinearRelu Module
@@ -229,11 +229,11 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # Give each module a unique module_no
         module_no = 0
         # Replace the patterns using the replacement function
-        # print(list(module.graph.nodes))
+        print(list(module.graph.nodes))
         for replacement_pattern, replacement_function in replacement_rules:
             matches = simple_chain_searcher(module, replacement_pattern)
             for (start, end) in matches:
                 replacement_function(module, start, end, module_no)
                 module_no += 1
-        # print(list(module.graph.nodes))
+        print(list(module.graph.nodes))
         return module
