@@ -173,6 +173,7 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
 
             # convert the layers in a pytorch understandable module list
+            # layers = [nn.Flatten(), nn.Linear(in_features=in_channels*1024,out_features=out_channels)]
             self.layers = nn.ModuleList(layers)
 
         def forward(self, x):

@@ -79,6 +79,7 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
         both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(dict(main_module.named_modules())[main_module_node.target], pattern_type_node)
         both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
         both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and isinstance(pattern_type_node, (types.FunctionType, types.BuiltinFunctionType)) and are_both_function_equal(main_module_node.target, pattern_type_node))
+        both_node_equal = both_node_equal or (main_module_node.op == 'placeholder' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
         return both_node_equal
     
     while (main_module_idx < main_module_length):
@@ -201,7 +202,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),          # OSS not required
             # Flatten Modules
             (['dequantize', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),        # Removes quantization
-            # (['x', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_x_flatten),                  # Replaces quantization
+            (['x', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_x_flatten),                  # Replaces quantization
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
             # LinearRelu Module
@@ -229,11 +230,11 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # Give each module a unique module_no
         module_no = 0
         # Replace the patterns using the replacement function
-        print(list(module.graph.nodes))
+        # print(list(module.graph.nodes))
         for replacement_pattern, replacement_function in replacement_rules:
             matches = simple_chain_searcher(module, replacement_pattern)
             for (start, end) in matches:
                 replacement_function(module, start, end, module_no)
                 module_no += 1
-        print(list(module.graph.nodes))
+                # print(list(module.graph.nodes))
         return module
