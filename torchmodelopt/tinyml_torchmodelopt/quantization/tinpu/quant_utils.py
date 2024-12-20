@@ -2,8 +2,6 @@ import torch
 from torch.fx import GraphModule, Node, symbolic_trace
 from typing import Dict, List
 
-from tinyml_torchmodelopt import quantization
-
 def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
     """
     Represent offset, weight using add, mult and right shift

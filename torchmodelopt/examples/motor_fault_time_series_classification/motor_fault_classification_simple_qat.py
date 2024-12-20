@@ -1,5 +1,4 @@
 # torch imports
-from ast import Mod
 from typing import Tuple, List
 import torch
 from torch.ao.quantization import quantize_fx
@@ -10,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import torchinfo
 
 # ti, onnx imports
-import tinyml_torchmodelopt.quantization as tinpu_quantization  # type: ignore
+from tinyml_torchmodelopt.quantization import TINPUTinyMLQATFxModule  # type: ignore
 import onnx
 import onnxruntime as ort
 
@@ -196,7 +195,7 @@ def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs
     qconfig_mapping = simple_qconfig.get_default_qconfig_mapping(qconfig_type)
     
     # QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
-    QAT_model = tinpu_quantization.TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
+    QAT_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
     return QAT_model
 
 

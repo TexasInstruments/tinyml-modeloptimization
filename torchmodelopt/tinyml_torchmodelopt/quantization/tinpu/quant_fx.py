@@ -128,9 +128,24 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 
-    def convert(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
+    def convert(self, *args, backend_config=None, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
-        super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
+        from torch.ao.quantization.backend_config import get_native_backend_config, BackendPatternConfig, ObservationType, DTypeConfig
+        backend_config = get_native_backend_config()
+        weighted_int8_dtype_config = DTypeConfig(
+            input_dtype=torch.quint8,
+            output_dtype=torch.quint8,
+            weight_dtype=torch.qint8,
+            bias_dtype=torch.float)
+        flatten_config = BackendPatternConfig(torch.nn.modules.flatten.Flatten) \
+            .set_observation_type(ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
+            .add_dtype_config(weighted_int8_dtype_config) \
+            .set_root_module(torch.nn.modules.flatten.Flatten) \
+            .set_qat_module(torch.nn.modules.flatten.Flatten) \
+            .set_reference_quantized_module(torch.nn.modules.flatten.Flatten)
+        backend_config = backend_config.set_backend_pattern_config(flatten_config)
+        backend_config = None
+        super().convert(*args, model_qconfig_format=model_qconfig_format, backend_config=backend_config, **kwargs)
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
@@ -198,11 +213,11 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.Module], quant_utils.TINPUQuantizedReplacement.from_child_module),
             # Pooling Modules
             ([torch.nn.AvgPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),                   # OSS required
-            ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_adaptiveavgpool2d),   # OSS required
-            ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),          # OSS not required
+            ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_adaptiveavgpool2d),            # OSS required
+            ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),                   # OSS not required
             # Flatten Modules
-            (['dequantize', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),        # Removes quantization
-            (['x', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_x_flatten),                  # Replaces quantization
+            (['dequantize', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),               # Removes quantization
+            (['x', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_x_flatten),                         # Replaces quantization
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
             # LinearRelu Module
