@@ -97,20 +97,21 @@ def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer):
     """
     avg_loss = 0
     model.train()
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(DEVICE), y.to(DEVICE)
-        # make predictions for the current batch
-        pred = model(X)
-        pred = pred.flatten(start_dim=1)
-        # compute the loss and its gradients
-        loss = loss_fn(pred, y)
-        loss.backward()
-        # adjust the learning weights
-        optimizer.step()
-        # zero the gradients for every batch
-        optimizer.zero_grad()
-        avg_loss += loss.item()
-    avg_loss = avg_loss/len(dataloader)
+    with torch.autograd.set_detect_anomaly(True):
+        for batch, (X, y) in enumerate(dataloader):
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            # make predictions for the current batch
+            pred = model(X)
+            pred = pred.flatten(start_dim=1)
+            # compute the loss and its gradients
+            loss = loss_fn(pred, y)
+            loss.backward()
+            # adjust the learning weights
+            optimizer.step()
+            # zero the gradients for every batch
+            optimizer.zero_grad()
+            avg_loss += loss.item()
+        avg_loss = avg_loss/len(dataloader)
     return avg_loss, model, loss_fn, optimizer
 
 
@@ -159,9 +160,9 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
                 in_ch = h_ch
 
             # reduces the dimensions of the nn layer to the output_size
-            layers += [nn.AdaptiveAvgPool2d(output_size=feature_size)]
+            # layers += [nn.AdaptiveAvgPool2d(output_size=feature_size)]
             # layers += [nn.MaxPool2d(kernel_size=(64,1), stride=(18,1))]
-            # layers += [nn.AvgPool2d(kernel_size=(64,1), stride=(18,1))]
+            layers += [nn.AvgPool2d(kernel_size=(64,1), stride=(18,1))]
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
@@ -172,12 +173,26 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
 
             # convert the layers in a pytorch understandable module list
-            # layers = [nn.Flatten(), nn.Linear(in_features=in_channels*1024,out_features=out_channels)]
+            layers2 = []
+            self.bn = nn.BatchNorm2d(num_features=in_channels)
+            layers2 += get_conv_bn_relu(in_channels, hidden_channels[0], kernel_size=(1, 1))
+            layers2 += get_conv_bn_relu(hidden_channels[0], 3, kernel_size=(1, 1))
+            self.layers2 = nn.ModuleList(layers2)
+            layers = [nn.Flatten(), nn.Linear(3*1024, out_features=out_channels)]
             self.layers = nn.ModuleList(layers)
 
-        def forward(self, x):
+        def forward(self, x: torch.Tensor):
+            # x = self.bn(x)
+            # residual = x
+
+            # for layer in self.layers2:
+            #     x = layer(x)
+            
+            # x = x + residual
+
             for layer in self.layers:
                 x = layer(x)
+                
             return x
 
     nn_model = NeuralNetwork().to(DEVICE)
@@ -222,7 +237,7 @@ def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, lea
 
     return model
 
-def rename_input_node_for_onnx_model(onnx_model: nn.Module, input_node_name: str) -> nn.Module:
+def rename_input_node_for_onnx_model(onnx_model, input_node_name: str):
     """Rename the node of an ONNX model"""
     # Update graph input name.
     onnx_model.graph.input[0].name = input_node_name
@@ -362,7 +377,7 @@ if __name__ == '__main__':
     # dataloader returns a batch of input - take the first value output it to get single input for QAT config
     example_input, example_target = next(iter(train_loader))
     example_input = example_input[:1]
-    
+    print(example_input.shape)
     nn_model = get_nn_model(IN_CHANNELS, hidden_channels=[8, 16, 32], feature_size=(4, 1), out_channels=NUM_CATEGORIES)
     torchinfo.summary(nn_model, input_data=example_input)
 

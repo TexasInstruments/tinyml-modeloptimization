@@ -31,16 +31,16 @@
 
 import platform
 import torch
-import types
 import operator
 
+import torch.ao.quantization
 from torch.fx import GraphModule
 from typing import List, Tuple
 
 import edgeai_torchmodelopt
 
 from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
-from . import quant_utils
+from .quant_utils import TINPUQuantizedReplacementUtils
 
 def are_both_function_equal(first_function, second_function) -> bool:
 
@@ -64,8 +64,8 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
     main_module_length = len(main_module_nodes)
     pattern_type_length = len(pattern_type)
 
-    assert isinstance(pattern_type, list) and all(isinstance(typ, (type, str,)) or isinstance(typ, (types.FunctionType, types.BuiltinFunctionType)) for typ in pattern_type), \
-        'This function only supports searching for a straight sequence of types of module!'
+    # assert isinstance(pattern_type, list) and all(isinstance(typ, (type, str,)) or isinstance(typ, (types.FunctionType, types.BuiltinFunctionType)) for typ in pattern_type), \
+    #     'This function only supports searching for a straight sequence of types of module!'
 
     main_module_idx = 0
     pattern_type_idx = 0
@@ -78,8 +78,8 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
     def is_both_node_equal(main_module_node: torch.Node, pattern_type_node: torch.Node) -> bool:
         both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(dict(main_module.named_modules())[main_module_node.target], pattern_type_node)
         both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and isinstance(pattern_type_node, (types.FunctionType, types.BuiltinFunctionType)) and are_both_function_equal(main_module_node.target, pattern_type_node))
-        both_node_equal = both_node_equal or (main_module_node.op == 'placeholder' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
+        both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
+        both_node_equal = both_node_equal or (main_module_node.op == 'placeholder' and isinstance(pattern_type_node, str) and main_module_node.op == pattern_type_node)
         return both_node_equal
     
     while (main_module_idx < main_module_length):
@@ -199,39 +199,39 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
 
         return scales_of_nodes
 
-    def replacement_rules(self, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
+    def replacement_rules(self, module, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
+
+        replacement_utils = TINPUQuantizedReplacementUtils(module)
 
         replacement_rules = []
         # Batch Normalization Modules
         if is_batch_normalized:
-            replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINPUQuantizedReplacement.from_q_qbn)]
+            replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_q_qbn)]
         else:
-            replacement_rules = [([torch.quantize_per_tensor, torch.nn.Identity], quant_utils.TINPUQuantizedReplacement.from_q_id),]
-
+            replacement_rules = [([torch.quantize_per_tensor, torch.nn.Identity], replacement_utils.from_q_id),]
+        # General Modules
         replacement_rules = replacement_rules + [
-            ([torch.nn.Sequential],quant_utils.TINPUQuantizedReplacement.from_child_module),
-            ([torch.nn.Module], quant_utils.TINPUQuantizedReplacement.from_child_module),
             # Pooling Modules
-            ([torch.nn.AvgPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),                   # OSS required
-            ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_adaptiveavgpool2d),            # OSS required
-            ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),                   # OSS not required
+            ([torch.nn.AvgPool2d], replacement_utils.from_passthrough_module),                   # OSS required
+            ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptiveavgpool2d),            # OSS required
+            ([torch.nn.MaxPool2d], replacement_utils.from_passthrough_module),                   # OSS not required
             # Flatten Modules
-            (['dequantize', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_dq_flatten),               # Removes quantization
-            (['x', torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_x_flatten),                         # Replaces quantization
+            (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),               # Removes quantization
+            ([torch.ops.quantized.add], replacement_utils.from_add),                             # Replaces quantization
             # ConvRelu2D Module
-            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
+            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
             # LinearRelu Module
-            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINPUQuantizedReplacement.from_qlinear_relu),
+            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], replacement_utils.from_qlinear_relu),
             # Linear Module
-            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINPUQuantizedReplacement.from_qlinear),
+            ([torch.ao.nn.quantized.modules.linear.Linear], replacement_utils.from_qlinear),
         ]
         # Dequantization Module
         if output_dequantize:
             # Replaces dequantization layer with OSS
-            replacement_rules += [(['dequantize'], quant_utils.TINPUQuantizedReplacement.from_dq_with_dq)]
+            replacement_rules += [(['dequantize'], replacement_utils.from_dq_with_dq)]
         else:
             # Replaces dequantization layer with Identity
-            replacement_rules += [(['dequantize'], quant_utils.TINPUQuantizedReplacement.from_dq)]
+            replacement_rules += [(['dequantize'], replacement_utils.from_dq)]
 
         return replacement_rules
 
@@ -241,15 +241,14 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # Convert the module using symbolic trace
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
         # Get the replacement rules to change the pattern
-        replacement_rules = self.replacement_rules(is_batch_normalized, output_dequantize)
-        # Give each module a unique module_no
-        module_no = 0
+        replacement_rules = self.replacement_rules(module, is_batch_normalized, output_dequantize)
         # Replace the patterns using the replacement function
-        # print(list(module.graph.nodes))
+        print()
+        print(list(module.graph.nodes))
         for replacement_pattern, replacement_function in replacement_rules:
             matches = simple_chain_searcher(module, replacement_pattern)
             for (start, end) in matches:
-                replacement_function(module, start, end, module_no)
-                module_no += 1
-                # print(list(module.graph.nodes))
+                replacement_function(module, start, end)
+        print()
+        print(list(module.graph.nodes))
         return module

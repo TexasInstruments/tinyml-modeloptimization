@@ -1,6 +1,7 @@
+from ast import main
 import torch
 from torch.fx import GraphModule, Node, symbolic_trace
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
     """
@@ -15,6 +16,7 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
     if not isinstance(offset, torch.Tensor):
         offset = torch.tensor(offset)
         weight = torch.tensor(weight)
+
     weight_abs = weight.abs()
     weight_sign = weight.sign()
     scale_max = (2**num_bits_scale)-1
@@ -53,26 +55,6 @@ def _get_parent_name(target: str):
     '''Gets the name of the parent module and attribute name of the module from the target of the module'''
     *parent, name = target.rsplit('.', 1)
     return (parent[0] if parent else ''), name
-
-
-def get_scale_from_parent(main_modules: Dict, node: Node) -> float:
-    if node.op != 'root':
-        if hasattr(main_modules[node.target], 'scale'):
-            return main_modules[node.target].scale
-        else:
-            return get_scale_from_parent(main_modules, node._prev)
-    else:
-        return 1
-
-
-def get_scale(main_modules: Dict, start: Node) -> float:
-    new_scale = 1
-    if hasattr(start, 'target') and hasattr(main_modules[start.target], 'scale'):
-        new_scale = main_modules[start.target].scale
-    else:
-        new_scale = get_scale_from_parent(main_modules, start)
-    return new_scale
-
 
 def find_hanging_nodes(main_module: GraphModule) -> List[Node]:
     count = []
@@ -175,10 +157,6 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     parent_module = main_modules[parent_name]
     # Set the attribute of parent module with the replacement module
     parent_module.__setattr__(attr_name, replace_module)
-    # Get the scale of the parent module
-    # new_scale = get_scale(main_modules, start)
-    # Store the scale of the parent module
-    # scales_of_nodes[start.name] = new_scale
 
     # If there are more nodes between start and end, remove them all
     if start != end:
@@ -227,7 +205,6 @@ class TINPUOffsetScaleShift(torch.nn.Module):
             self.register_buffer('shift_mult', shift_mult.reshape(-1))
         else:
             raise RuntimeError('Invalid dimensions')
-        #
 
     def extra_repr(self):
         return f'offset={self.offset}, mult={self.mult}, shift={self.shift_mult}, quant_min={self.quant_min}, quant_max={self.quant_max}'
@@ -236,81 +213,119 @@ class TINPUOffsetScaleShift(torch.nn.Module):
         y = (x + self.offset) * self.mult
         y = y * self.shift_mult
         if self.use_floor:
-            # the floor operation mimics the actual shift and bit select in hardware
+            # The floor operation mimics the actual shift and bit select in hardware
             y = torch.floor(y).clamp(min=self.quant_min, max=self.quant_max)
         else:
             y = torch.round(y).clamp(min=self.quant_min, max=self.quant_max)
         return y
 
-class TINPUQuantizedReplacement:
-    @staticmethod
-    def from_child_module(model, start, end, module_no=0):
-        '''
-        copy quant scale, zero_point from child module
-        '''
-        named_modules = dict(model.named_modules())
-        module = named_modules[start.target]
-        replace_module = module
-        named_children = list(module.named_children())
-        if hasattr(module, 'scale') and hasattr(module, 'zero_point'):
-            replace_module = module
-        elif len(named_children) > 0:
-            last_child_name, last_child = named_children[-1]
-            if hasattr(last_child, 'scale') and hasattr(last_child, 'zero_point'):
-                module.scale = last_child.scale
-                module.zero_point = last_child.zero_point
-                replace_module = module
 
-        replace_call_module(model, start, end, replace_module, module_no)
+class TINPUQuantizedReplacementUtils():
+    def __init__(self, model: GraphModule):
+        self.module: GraphModule = model
+        self.graph_quant_params: Dict[str, Dict] = dict()
+        self.module_no: int = 0
+        self.from_placeholder()
+        self.__propagate_quant_params()
 
+    def __get_module_no(self) -> int:
+        self.module_no += 1
+        return self.module_no
+    
+    def __propagate_quant_params(self) -> None:
+        for node in self.module.graph.nodes:
+            scale, zero_point = 1.0, 0.0
+
+            if node.op == 'placeholder':                                            # Inputs (x) nodes
+                scale, zero_point = 1.0, 0.0
+            elif node.op == 'call_module':                                          # ConvBnRelu, AvgPool, Linear, Flatten nodes
+                named_modules = dict(self.module.named_modules())
+                module = named_modules[node.target]
+                if hasattr(module, 'scale') and hasattr(module, 'zero_point'):     
+                    # ConvBnRelu, Linear modules already have q_params
+                    scale, zero_point = module.scale, module.zero_point
+                else:                                                               
+                    # Flatten, Pooling modules have single input (args)
+                    args = node.args[0]
+                    scale = self.graph_quant_params[args.name]['scale']
+                    zero_point = self.graph_quant_params[args.name]['zero_point']
+            elif node.op == 'call_method':                                          # Dequantize node
+                # Quant params from previous node
+                if node.name.startswith(('dequantize')):
+                    scale = 1.0
+                    zero_point = 0.0
+                else:
+                    prev_node = node.prev
+                    scale = self.graph_quant_params[prev_node.name]['scale']
+                    zero_point = self.graph_quant_params[prev_node.name]['zero_point']
+            elif node.op == 'call_function':                                        # Quantize_per_tensor, Reshape args nodes
+                # Get the quant params from model[arg_node.target]
+                if node.name.startswith(('quantize_per_tensor')):
+                    args = node.args
+                    scale = getattr(self.module, args[1].target)
+                    zero_point = getattr(self.module, args[2].target)
+                else:
+                    scale = self.graph_quant_params[node.prev.name]['scale']
+                    zero_point = self.graph_quant_params[node.prev.name]['zero_point']
+            elif node.op == 'get_attr':                                              # Attribute nodes of functions
+                scale, zero_point = 1.0, 0.0
+            elif node.op == 'output':                                                # Output node
+                scale, zero_point = 1.0, 0.0
+            # Add the quantization params of the current node
+            if node.name not in self.graph_quant_params.keys():
+                self.graph_quant_params[node.name] = dict()
+            self.graph_quant_params[node.name]['scale'] = scale
+            self.graph_quant_params[node.name]['zero_point'] = zero_point
+            # Add the quantization params for the users of current node
+            for user in node.users:
+                if 'next' in self.graph_quant_params[node.name]:
+                    self.graph_quant_params[node.name]['next'].append(user)
+                else:
+                    self.graph_quant_params[node.name]['next'] = [user]
+                if user.name not in self.graph_quant_params.keys():
+                    self.graph_quant_params[user.name] = dict()
+                if 'prev' in self.graph_quant_params[user.name]:
+                    self.graph_quant_params[user.name]['prev'].append(node)
+                else:
+                    self.graph_quant_params[user.name]['prev'] = [node]
+
+        for item in self.graph_quant_params.items():
+            print(item)
         return None
-
-    @staticmethod
-    def _get_scale_zero_point_attrs_from_model(model, node):
-        # Get scale, zero point of node from model.node_scale_0, model.node_zero_point_0
-        scale = zero_point = None
-        node_name_base = node.name.replace('.', '_')
-        # Attribute names of scale and zero point of node
-        scale_attr_name, zero_point_attr_name = node_name_base + '_scale_0', node_name_base + '_zero_point_0'
-        if hasattr(model, scale_attr_name) and hasattr(model, zero_point_attr_name):
-            scale, zero_point = getattr(model, scale_attr_name), getattr(model, zero_point_attr_name)
-        return scale, zero_point
-
-    @staticmethod
-    def _get_scale_zero_point_from_previous(model: GraphModule, node: Node):
-        
-        scale = zero_point = None
-        named_modules = dict(model.named_modules())
-        prev_node = node.prev
-
-        while prev_node:
-            if prev_node.target in named_modules:
-                previous_module = named_modules[prev_node.target]
-                #Return the scale and zero_point of previous module
-                if hasattr(previous_module, 'scale') and hasattr(previous_module, 'zero_point'):
-                    scale, zero_point = previous_module.scale, previous_module.zero_point
-                return scale, zero_point
-            else:
-                # Return the scale and zero_point of previous node from model
-                scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, prev_node)
-                if scale is not None and zero_point is not None:
-                    return scale, zero_point
-            prev_node = prev_node.prev
-        
-        return scale, zero_point
-
-    @staticmethod
-    def from_q(model, start, end, module_no=0):
+    
+    def get_q_params(self, node: Node, using: str='prev') -> Tuple[float]:
+        scale, zero_point = 1.0, 0.0
+        if using == 'prev':
+            prev_node: Node = self.graph_quant_params[node.name]['prev'][0]
+            scale = self.graph_quant_params[prev_node.name]['scale']
+            zero_point = self.graph_quant_params[prev_node.name]['zero_point']
+        if using == 'this':
+            scale = self.graph_quant_params[node.name]['scale']
+            zero_point = self.graph_quant_params[node.name]['zero_point']
+        if using == 'next':
+            next_node: Node = self.graph_quant_params[node.name]['next'][0]
+            scale = self.graph_quant_params[next_node.name]['scale']
+            zero_point = self.graph_quant_params[next_node.name]['zero_point']
+        return (scale, zero_point)
+    
+    def from_q(self, model: GraphModule, start: Node, end: Node):
         offset_scale_shift = [torch.tensor([0]), torch.tensor([1]), torch.tensor([1])]
         oss_module = TINPUOffsetScaleShift(*offset_scale_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = 1.0
         oss_module.zero_point = 0.0
         # Replace quantization method with OSS Layer
-        replace_call_function_or_method(model, start, end, oss_module, module_no)
+        replace_call_function_or_method(model, start, end, oss_module, self.__get_module_no())
+        return None
+    
+    def from_add(self, model: GraphModule, start: Node, end: Node):
+        args = start.args
+        scale, zero_point = 1.0, 0.0
+        named_modules = dict(model.named_modules())
+        module = named_modules[args[0].target]
+        replace_call_module(model, args[0], args[3], module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_q_id(model, start, end, module_no=0):
+    def from_q_id(self, model: GraphModule, start: Node, end: Node):
         # Quantization Node
         q_node = start
         scale = getattr(model, q_node.args[1].target)
@@ -321,11 +336,10 @@ class TINPUQuantizedReplacement:
         oss_module.scale = scale
         oss_module.zero_point = zero_point
         # Replace quantize function with OSS Module
-        replace_call_function_or_method(model, start, end, oss_module, module_no)
+        replace_call_function_or_method(model, start, end, oss_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_q_qbn(model, start, end, module_no=0):
+    def from_q_qbn(self, model: GraphModule, start: Node, end: Node):
         # Quantized Batch Normalization Module
         qbn_module = dict(model.named_modules())[end.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
@@ -344,32 +358,31 @@ class TINPUQuantizedReplacement:
         oss_module.scale = scale2
         oss_module.zero_point = zero_point2
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
-        replace_call_function_or_method(model, start, end, oss_module, module_no)
+        replace_call_function_or_method(model, start, end, oss_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_module_with_dq(model, start, end, module_no=0):
+    def from_module_with_dq(self, model: GraphModule, start: Node, end: Node):
         module = dict(model.named_modules())[start.target]
-        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start.next)
+        scale, zero_point = self.get_q_params(start, using='prev')
         mult_module = MultiplyModule(scale)
-        mult_module.scale = 1.0
+        mult_module.scale = scale
         mult_module.zero_point = 0.0
         seq_module = torch.nn.Sequential(module, mult_module)
         seq_module.scale = mult_module.scale
         seq_module.zero_point = mult_module.zero_point
-        return seq_module
+        replace_call_module(model, start, end, seq_module, self.__get_module_no())
+        return None
 
-    @staticmethod
-    def from_module_with_q(model, start, end, module_no=0):
+    def from_module_with_q(self, model: GraphModule, start: Node, end: Node):
         module = dict(model.named_modules())[start.target]
-        oss_module = __class__.from_q(model, start.next, end, module_no)
+        oss_module = self.from_q(model, start.next, end)
         seq_module = torch.nn.Sequential(module, oss_module)
         seq_module.scale = oss_module.scale
         seq_module.zero_point = oss_module.zero_point
-        return seq_module
+        replace_call_module(model, start, end, seq_module, self.__get_module_no())
+        return None
 
-    @staticmethod
-    def from_qconv_relu(model, start, end, module_no=0, with_relu=True):
+    def from_qconv_relu(self, model: GraphModule, start: Node, end: Node, with_relu: bool=True):
         # zero_point_offset_for_activation = -128
         named_modules = dict(model.named_modules())
 
@@ -378,7 +391,7 @@ class TINPUQuantizedReplacement:
                                       kernel_size=qconvrelu_module.kernel_size, stride=qconvrelu_module.stride,
                                       padding=qconvrelu_module.padding, dilation=qconvrelu_module.dilation,
                                       groups=qconvrelu_module.groups, bias=False)
-
+        
         weight = qconvrelu_module.weight()
         per_channel = (weight.qscheme() in (torch.per_channel_symmetric, torch.per_channel_affine))
 
@@ -387,8 +400,7 @@ class TINPUQuantizedReplacement:
 
         weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
         weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
-        input_scale = named_modules[start.prev.target].scale
-        # input_zero_point = named_modules[start.prev.target].zero_point
+        input_scale, input_zero_point = self.get_q_params(start, using='prev')
 
         acc_scale = weight_scale * input_scale
         bias_scale = acc_scale
@@ -417,13 +429,10 @@ class TINPUQuantizedReplacement:
         
         seq_module.scale = qconvrelu_module.scale
         seq_module.zero_point = qconvrelu_module.zero_point
-
-        replace_call_module(model, start, end, seq_module, module_no)
-
+        replace_call_module(model, start, end, seq_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_qlinear(model, start, end, module_no=0, with_relu=False):
+    def from_qlinear(self, model: GraphModule, start: Node, end: Node, with_relu: bool=False):
         # zero_point_offset_for_activation = -128
 
         # named_modules = dict(model.named_modules())
@@ -440,7 +449,7 @@ class TINPUQuantizedReplacement:
         weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
         weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
 
-        input_scale, input_zero_point = __class__._get_scale_zero_point_from_previous(model, start)
+        input_scale, input_zero_point = self.get_q_params(start, using='prev')
 
         acc_scale = weight_scale * input_scale
         bias_scale = acc_scale
@@ -468,41 +477,30 @@ class TINPUQuantizedReplacement:
         #
         seq_module.scale = qlinear_module.scale
         seq_module.zero_point = qlinear_module.zero_point
-        replace_call_module(model, start, end, seq_module, module_no)
+        replace_call_module(model, start, end, seq_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_qlinear_relu(model, start, end, module_no=0, with_relu=True):
-        return __class__.from_qlinear(model, start, end, module_no, with_relu=with_relu)
+    def from_qlinear_relu(self, model: GraphModule, start: Node, end: Node, with_relu: bool=True):
+        self.from_qlinear(model, start, end, with_relu=with_relu)
+        return None
 
-    @staticmethod
-    def from_passthrough_module(model, start, end, module_no=0):
+    def from_passthrough_module(self, model: GraphModule, start: Node, end: Node):
         named_modules = dict(model.named_modules())
         passthrough_module = named_modules[start.target]
         replace_module = passthrough_module
-        scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, start)
+        # Get the scale, zero_point from quant_param dict
+        scale, zero_point = self.get_q_params(start, using='prev')
+        # If the module already has scale, zero_point
         if hasattr(passthrough_module, 'scale') and hasattr(passthrough_module, 'zero_point'):
             replace_module = passthrough_module
         elif scale is not None and zero_point is not None:
-            passthrough_module.scale = scale
-            passthrough_module.zero_point = zero_point
-            replace_module = passthrough_module
-        elif start.prev.target in named_modules:
-            prev_module = named_modules[start.prev.target]
-            passthrough_module.scale = prev_module.scale
-            passthrough_module.zero_point = prev_module.zero_point
-            replace_module = passthrough_module
-        elif scale is not None and zero_point is not None:
-            scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, start.prev)
-            passthrough_module.scale = scale
-            passthrough_module.zero_point = zero_point
-            replace_module = passthrough_module
-
-        replace_call_module(model, start, end, replace_module, module_no)
+            # Assign scale, zero_point from quant_param dict
+            replace_module.scale = scale
+            replace_module.zero_point = zero_point
+        replace_call_module(model, start, end, replace_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_flatten(model, start, end, module_no=0):
+    def from_flatten(self, model: GraphModule, start: Node, end: Node):
         named_modules = dict(model.named_modules())
         replace_module = torch.nn.Flatten(*start.args[1:])
         if start.target in named_modules:
@@ -512,64 +510,70 @@ class TINPUQuantizedReplacement:
         zero_point = getattr(model, quantization_node.args[2].target)
         replace_module.scale = scale
         replace_module.zero_point = zero_point
-
-        replace_call_function_or_method(model, start, quantization_node, replace_module, module_no)
+        replace_call_function_or_method(model, start, quantization_node, replace_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_dq(model, start, end, module_no=0):
+    def from_dq(self, model: GraphModule, start: Node, end: Node):
         id_module = torch.nn.Identity()
         id_module.scale = 1.0
         id_module.zero_point = 0.0
-        replace_call_function_or_method(model, start, end, id_module, module_no)
+        replace_call_function_or_method(model, start, end, id_module, self.__get_module_no())
         return None
     
-    @staticmethod
-    def from_dq_flatten(model, start, end, module_no=0):
+    def from_dq_flatten(self, model: GraphModule, start: Node, end: Node):
         dq_node = start
         flatten_node = end
-        __class__.from_dq(model, dq_node, dq_node, module_no)
-        __class__.from_flatten(model, flatten_node, flatten_node, module_no)
+        self.from_dq(model, dq_node, dq_node)
+        self.from_flatten(model, flatten_node, flatten_node)
         return None
     
-    @staticmethod
-    def from_x_flatten(model, start, end, module_no=0):
-        # Flatten Module
-        flatten_node = end
-        quantization_node = flatten_node.next.next.next
-        # Quantization Params for OSS Module
-        scale, zero_point = __class__._get_scale_zero_point_attrs_from_model(model, flatten_node)
-        scale = 1/scale
+    def from_placeholder(self):
+        nodes = list(self.module.graph.nodes)
+        named_modules = dict(self.module.named_modules())
+        main_node = nodes[1]
+        if not (nodes[0].op == 'placeholder' and nodes[4].name.startswith('quantize_per_tensor')):
+            return None
+        for node in nodes:
+            if node.name.startswith('quantize_per_tensor'):
+                quant_node = node
+                zero_point_node = node.prev
+                scale_node = node.prev.prev
+                
+                scale = getattr(self.module, scale_node.target)
+                zero_point = getattr(self.module, zero_point_node.target)
 
-        # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point, scale, num_bits_scale=8)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
-        oss_module.scale = scale
-        oss_module.zero_point = zero_point
-        flatten_module = torch.nn.Flatten(*flatten_node.args[1:])
-        seq_module = torch.nn.Sequential(oss_module, flatten_module)
-        seq_module.scale = scale
-        seq_module.zero_point = zero_point
-        # Remove the scale, zero_point, quantize method and flatten layer with Seq Module
-        replace_call_function_or_method(model, flatten_node, quantization_node, seq_module, module_no)
+                replace_module = named_modules[main_node.target]
+                replace_module.scale = scale
+                replace_module.zero_point = zero_point
+
+                oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point, 1/scale, num_bits_scale=8)
+                oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+                oss_module.scale = scale
+                oss_module.zero_point = zero_point
+
+                seq_module = torch.nn.Sequential(oss_module, replace_module)
+                seq_module.scale = scale
+                seq_module.zero_point = zero_point
+
+                replace_call_module(self.module, main_node, quant_node, seq_module, self.__get_module_no())
+                break
+
         return None
     
-    @staticmethod
-    def from_dq_with_dq(model, start, end, module_no=0):
-        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start)
+    def from_dq_with_dq(self, model: GraphModule, start: Node, end: Node):
+        scale, zero_point = self.get_q_params(start, using='prev')
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, scale, num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=4, dim=1)
         oss_module.scale = scale
         oss_module.zero_point = zero_point
-        replace_call_function_or_method(model, start, end, oss_module, module_no)
+        replace_call_function_or_method(model, start, end, oss_module, self.__get_module_no())
         return None
 
-    @staticmethod
-    def from_avgpool2d(model, start, end, module_no=0):
+    def from_avgpool2d(self, model: GraphModule, start: Node, end: Node):
         # AvgPool2D module
         pool_module = dict(model.named_modules())[start.target]
         # OSS Module
-        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start)
+        scale, zero_point = self.get_q_params(start, using='prev')
         if not isinstance(scale, torch.Tensor):
             scale = torch.tensor(scale)
             zero_point = torch.tensor(zero_point)
@@ -586,12 +590,10 @@ class TINPUQuantizedReplacement:
         output_module.scale = scale
         output_module.zero_point = zero_point
         # Replace AvgPool2D with Sequential Module
-        replace_call_module(model, start, end, output_module, module_no)
-        
+        replace_call_module(model, start, end, output_module, self.__get_module_no())
         return None
     
-    @staticmethod
-    def from_adaptiveavgpool2d(model, start, end, module_no=0):
+    def from_adaptiveavgpool2d(self, model: GraphModule, start: Node, end: Node):
         '''
         The below function offloads to NPU, but only works for output size->1,1
         Otherwise we will use a generic implementation, as AdaptiveAvgPooling will be used mostly only at the model end
@@ -600,7 +602,7 @@ class TINPUQuantizedReplacement:
         # AdaptiveAvgPool2D Module
         pool_module = dict(model.named_modules())[start.target]
         # OSS Module
-        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start)
+        scale, zero_point = self.get_q_params(start, using='prev')
         if not isinstance(scale, torch.Tensor):
             scale = torch.tensor(scale)
             zero_point = torch.tensor(zero_point)
@@ -608,7 +610,7 @@ class TINPUQuantizedReplacement:
         total_kernel_area = pool_module.output_size[0] * pool_module.output_size[1]
         if total_kernel_area != 1:
             #  If output size isn't (1, 1), we will use the generic implementation
-            return __class__.from_passthrough_module(model, start, end, module_no)
+            return self.from_passthrough_module(model, start, end)
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor((total_kernel_area+1)//2), torch.tensor(1 / total_kernel_area), num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
         # ReduceSum Module
@@ -620,6 +622,6 @@ class TINPUQuantizedReplacement:
         output_module.scale = scale
         output_module.zero_point = zero_point
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
-        replace_call_module(model, start, end, output_module, module_no)
+        replace_call_module(model, start, end, output_module, self.__get_module_no())
         return None
     
