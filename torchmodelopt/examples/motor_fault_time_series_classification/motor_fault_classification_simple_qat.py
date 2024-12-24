@@ -97,21 +97,20 @@ def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer):
     """
     avg_loss = 0
     model.train()
-    with torch.autograd.set_detect_anomaly(True):
-        for batch, (X, y) in enumerate(dataloader):
-            X, y = X.to(DEVICE), y.to(DEVICE)
-            # make predictions for the current batch
-            pred = model(X)
-            pred = pred.flatten(start_dim=1)
-            # compute the loss and its gradients
-            loss = loss_fn(pred, y)
-            loss.backward()
-            # adjust the learning weights
-            optimizer.step()
-            # zero the gradients for every batch
-            optimizer.zero_grad()
-            avg_loss += loss.item()
-        avg_loss = avg_loss/len(dataloader)
+    for batch, (X, y) in enumerate(dataloader):
+        X, y = X.to(DEVICE), y.to(DEVICE)
+        # make predictions for the current batch
+        pred = model(X)
+        pred = pred.flatten(start_dim=1)
+        # compute the loss and its gradients
+        loss = loss_fn(pred, y)
+        loss.backward()
+        # adjust the learning weights
+        optimizer.step()
+        # zero the gradients for every batch
+        optimizer.zero_grad()
+        avg_loss += loss.item()
+    avg_loss = avg_loss/len(dataloader)
     return avg_loss, model, loss_fn, optimizer
 
 
