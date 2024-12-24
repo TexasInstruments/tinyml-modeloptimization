@@ -1,5 +1,4 @@
 # torch imports
-from typing import Tuple, List
 import torch
 from torch.ao.quantization import quantize_fx
 import torch.utils
@@ -16,6 +15,7 @@ import onnxruntime as ort
 # other imports
 import numpy as np
 import pandas as pd
+from typing import Tuple, List
 from sklearn.metrics import confusion_matrix
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -132,15 +132,7 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
         layers += [nn.BatchNorm2d(num_features=out_channels)]
         layers += [nn.ReLU()]
         return layers
-
-    class ReshapeLayer(nn.Module):
-        def forward(self, x):
-            return x.reshape(x.shape[0], -1)
-
-    # class FlattenLayer(torch.nn.Flatten):
-    #     def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #         return super().forward(x)
-
+    
     class NeuralNetwork(nn.Module):
         def __init__(self):
             super().__init__()
@@ -148,7 +140,6 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
             layers = []
             if normalize_input:
                 # normalize the input with input features as in_channels
-                # layers += [nn.Flatten()] 
                 layers += [nn.BatchNorm2d(num_features=in_channels)]
             else:
                 layers += [nn.Identity()]
@@ -160,39 +151,21 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
                 in_ch = h_ch
 
             # reduces the dimensions of the nn layer to the output_size
-            # layers += [nn.AdaptiveAvgPool2d(output_size=feature_size)]
-            # layers += [nn.MaxPool2d(kernel_size=(64,1), stride=(18,1))]
-            layers += [nn.AvgPool2d(kernel_size=(64,1), stride=(18,1))]
+            layers += [nn.AdaptiveAvgPool2d(output_size=feature_size)]
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
             layers += [nn.Flatten()] 
-            # layers += [ReshapeLayer()] 
 
             # linearize the last layer in given out_features
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
 
             # convert the layers in a pytorch understandable module list
-            layers2 = []
-            self.bn = nn.BatchNorm2d(num_features=in_channels)
-            layers2 += get_conv_bn_relu(in_channels, hidden_channels[0], kernel_size=(1, 1))
-            layers2 += get_conv_bn_relu(hidden_channels[0], 3, kernel_size=(1, 1))
-            self.layers2 = nn.ModuleList(layers2)
-            layers = [nn.Flatten(), nn.Linear(3*1024, out_features=out_channels)]
             self.layers = nn.ModuleList(layers)
 
         def forward(self, x: torch.Tensor):
-            # x = self.bn(x)
-            # residual = x
-
-            # for layer in self.layers2:
-            #     x = layer(x)
-            
-            # x = x + residual
-
             for layer in self.layers:
                 x = layer(x)
-                
             return x
 
     nn_model = NeuralNetwork().to(DEVICE)
@@ -257,13 +230,10 @@ def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qa
     nn_model.to(DEVICE)
 
     if with_qat:
-        from edgeai_torchmodelopt.xnn.utils import save_svg_fx
         if hasattr(nn_model, "convert"):
             nn_model = nn_model.convert()
-            save_svg_fx(nn_model.module, 'qat_model_converted')
         else:
             nn_model = quantize_fx.convert_fx(nn_model.module)
-            save_svg_fx(nn_model, 'qat_model_converted')
 
     if hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
@@ -339,19 +309,10 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
                 correct_predictions += 1
 
     accuracy = round(correct_predictions/total_predictions, 5)
-    print()
     return accuracy
 
-def cleanup():
-    import os
-    files = os.listdir()
-    for file in files:
-        if file.endswith('.onnx') or file.endswith('.svg'):
-            os.remove(file)
-    return
-
 if __name__ == '__main__':
-    cleanup()
+
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
@@ -377,7 +338,7 @@ if __name__ == '__main__':
     # dataloader returns a batch of input - take the first value output it to get single input for QAT config
     example_input, example_target = next(iter(train_loader))
     example_input = example_input[:1]
-    print(example_input.shape)
+
     nn_model = get_nn_model(IN_CHANNELS, hidden_channels=[8, 16, 32], feature_size=(4, 1), out_channels=NUM_CATEGORIES)
     torchinfo.summary(nn_model, input_data=example_input)
 
@@ -393,9 +354,8 @@ if __name__ == '__main__':
         
         qat_learning_rate = LEARNING_RATE/10
         qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
+
         accuracy = validate_model(qat_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
-        from edgeai_torchmodelopt.xnn.utils import save_svg_fx, save_svg_pt2e
-        save_svg_fx(qat_model.module, 'qat_model_unconverted')
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
 
         qat_model = export_model(qat_model, example_input, MODEL_NAME, with_qat=True)

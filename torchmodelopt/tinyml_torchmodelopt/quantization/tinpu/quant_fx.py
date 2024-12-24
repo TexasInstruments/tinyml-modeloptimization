@@ -29,93 +29,17 @@
 #
 #################################################################################
 
-import platform
 import torch
-import operator
-
 import torch.ao.quantization
 from torch.fx import GraphModule
+
+import platform
 from typing import List, Tuple
 
 import edgeai_torchmodelopt
 
 from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
-from .quant_utils import TINPUQuantizedReplacementUtils
-
-def are_both_function_equal(first_function, second_function) -> bool:
-
-    operationDict = {torch.add: operator.add,torch.sub: operator.sub,torch.mul: operator.mul,
-                        operator.add: torch.add,operator.sub: torch.sub,operator.mul: torch.mul}
-    if first_function == second_function:
-        return True
-    elif hasattr(first_function, 'target') and first_function.target in operationDict.keys():
-        # if it is one  of add, sub, mul from either of operator module or torch module it should be the counter part
-        return second_function == operationDict[first_function]
-    elif first_function in operationDict.keys():
-        # if it is one  of add, sub, mul from either of operator module or torch module it should be the counter part
-        return second_function == operationDict[first_function]
-    else:
-        return False
-    
-
-def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[torch.Node]:
-
-    main_module_nodes = list(main_module.graph.nodes)
-    main_module_length = len(main_module_nodes)
-    pattern_type_length = len(pattern_type)
-
-    # assert isinstance(pattern_type, list) and all(isinstance(typ, (type, str,)) or isinstance(typ, (types.FunctionType, types.BuiltinFunctionType)) for typ in pattern_type), \
-    #     'This function only supports searching for a straight sequence of types of module!'
-
-    main_module_idx = 0
-    pattern_type_idx = 0
-
-    matched_patterns = list()
-    next_match = -1
-
-    inp, out = None, None
-
-    def is_both_node_equal(main_module_node: torch.Node, pattern_type_node: torch.Node) -> bool:
-        both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(dict(main_module.named_modules())[main_module_node.target], pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
-        both_node_equal = both_node_equal or (main_module_node.op == 'placeholder' and isinstance(pattern_type_node, str) and main_module_node.op == pattern_type_node)
-        return both_node_equal
-    
-    while (main_module_idx < main_module_length):
-
-        main_module_node = main_module_nodes[main_module_idx]
-        pattern_type_node = pattern_type[pattern_type_idx]
-        # Check if both main module node and pattern node are equal or not
-        both_node_equal = is_both_node_equal(main_module_node, pattern_type_node)
-        if both_node_equal:
-            if main_module_node == pattern_type[0] and next_match == -1 and pattern_type_idx != 0:
-                # if another pattern is matching inside the current matching pattern
-                next_match = main_module_idx
-            if pattern_type_idx == 0:
-                # Node is matched with 1st node of pattern
-                inp = main_module_node
-
-            main_module_idx += 1
-            pattern_type_idx += 1
-            if pattern_type_idx == pattern_type_length:
-                # Append the nodes which matched the pattern
-                out = main_module_node
-                matched_patterns.append((inp, out))
-                next_match = -1
-        else:
-            # Reset the values as nodes didn't match
-            inp, out = None, None
-            pattern_type_idx = 0
-            if next_match == -1:
-                main_module_idx += 1
-            else:
-                main_module_idx = next_match
-                next_match = -1
-        pattern_type_idx = pattern_type_idx % pattern_type_length
-
-    return matched_patterns
-
+from .quant_utils import TINPUQuantizedReplacementUtils, simple_chain_searcher
 
 class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def __init__(self, *args, qconfig_type=None, **kwargs) -> None:
@@ -128,29 +52,13 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 
-    def convert(self, *args, backend_config=None, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
+    def convert(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
-        from torch.ao.quantization.backend_config import get_native_backend_config, BackendPatternConfig, ObservationType, DTypeConfig
-        backend_config = get_native_backend_config()
-        weighted_int8_dtype_config = DTypeConfig(
-            input_dtype=torch.quint8,
-            output_dtype=torch.quint8,
-            weight_dtype=torch.qint8,
-            bias_dtype=torch.float)
-        flatten_config = BackendPatternConfig(torch.nn.modules.flatten.Flatten) \
-            .set_observation_type(ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
-            .add_dtype_config(weighted_int8_dtype_config) \
-            .set_root_module(torch.nn.modules.flatten.Flatten) \
-            .set_qat_module(torch.nn.modules.flatten.Flatten) \
-            .set_reference_quantized_module(torch.nn.modules.flatten.Flatten)
-        backend_config = backend_config.set_backend_pattern_config(flatten_config)
-        backend_config = None
-        super().convert(*args, model_qconfig_format=model_qconfig_format, backend_config=backend_config, **kwargs)
+        super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
-
         return self
 
     def export(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
@@ -179,30 +87,9 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             if len(list(module_entry.parameters(recurse=False))) > 0 and isinstance(module_entry, batch_norm_modules):
                 return True
         return False
-    
-    def get_scales_of_nodes(module: GraphModule, scales_of_nodes: List[float]) -> List[float]:
-        
-        def recur_args(node: torch.Node) -> float:
-            bfs = [arg for arg in node.args]
-            for node in bfs:
-                if str(node) in scales_of_nodes.keys():
-                    return scales_of_nodes[str(node)]
-                else:
-                    bfs += [arg for arg in node.args]
-                bfs.pop(0)
-            return None
 
-        nodes = list(module.graph.nodes)
-        for node in nodes:
-            if str(node) not in scales_of_nodes.keys():
-                scales_of_nodes[str(node)] = recur_args(node)
-
-        return scales_of_nodes
-
-    def replacement_rules(self, module, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
-
-        replacement_utils = TINPUQuantizedReplacementUtils(module)
-
+    def replacement_rules(self, replacement_utils: TINPUQuantizedReplacementUtils, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
+        # List to store the pattern and corresponding replacement function
         replacement_rules = []
         # Batch Normalization Modules
         if is_batch_normalized:
@@ -217,7 +104,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.MaxPool2d], replacement_utils.from_passthrough_module),                   # OSS not required
             # Flatten Modules
             (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),               # Removes quantization
-            ([torch.ops.quantized.add], replacement_utils.from_add),                             # Replaces quantization
+            # ([torch.ops.quantized.add], replacement_utils.from_add),                             # Replaces quantization
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
             # LinearRelu Module
@@ -241,14 +128,11 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # Convert the module using symbolic trace
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
         # Get the replacement rules to change the pattern
-        replacement_rules = self.replacement_rules(module, is_batch_normalized, output_dequantize)
+        replacement_utils = TINPUQuantizedReplacementUtils(module)
+        replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_dequantize)
         # Replace the patterns using the replacement function
-        print()
-        print(list(module.graph.nodes))
         for replacement_pattern, replacement_function in replacement_rules:
             matches = simple_chain_searcher(module, replacement_pattern)
             for (start, end) in matches:
                 replacement_function(module, start, end)
-        print()
-        print(list(module.graph.nodes))
         return module
