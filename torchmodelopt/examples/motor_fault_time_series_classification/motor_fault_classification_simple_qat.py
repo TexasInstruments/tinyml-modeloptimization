@@ -8,13 +8,14 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import torchinfo
 
 # ti, onnx imports
-import tinyml_torchmodelopt.quantization as tinpu_quantization  # type: ignore
+from tinyml_torchmodelopt.quantization import TINPUTinyMLQATFxModule  # type: ignore
 import onnx
 import onnxruntime as ort
 
 # other imports
 import numpy as np
 import pandas as pd
+from typing import Tuple, List
 from sklearn.metrics import confusion_matrix
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -26,7 +27,7 @@ class MotorFaultDataset(Dataset):
     The window will have a single target value which will be of the max occurring target.
     """
 
-    def __init__(self, X, Y, window_length, window_offset, data_format='NHWC'):
+    def __init__(self, X: np.ndarray, Y: np.ndarray, window_length: int, window_offset: int, data_format: str = 'NHWC') -> None:
         self.x = torch.from_numpy(X).type(torch.FloatTensor)
         self.y = torch.from_numpy(Y).type(torch.LongTensor)
         self.len = self.x.shape[0]
@@ -36,7 +37,7 @@ class MotorFaultDataset(Dataset):
         self.window_offset = window_offset
         self.data_format = data_format
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         start_offset = index*self.window_offset
         # form a window of input values
         window_samples_x = self.x[start_offset:start_offset+self.window_length]
@@ -56,7 +57,7 @@ class MotorFaultDataset(Dataset):
         return (self.len-self.window_length)//self.window_offset
 
 
-def get_dataset_from_csv(csv_file, normalize_dataset=False):
+def get_dataset_from_csv(csv_file: str, normalize_dataset: bool = False) -> Tuple[np.ndarray]:
     """
     Read the csv_file to extract the X, Y values.
     normalize_dataset will normalize the column with the max value
@@ -71,7 +72,7 @@ def get_dataset_from_csv(csv_file, normalize_dataset=False):
     return X, Y
 
 
-def get_dataloader(X, Y, window_length, window_offset, batch_size):
+def get_dataloader(X: np.ndarray, Y: np.ndarray, window_length: int, window_offset: int, batch_size: int) -> Tuple[DataLoader]:
     """
     Get the torch dataloaders from the X, Y of the dataset. Create windows in dataset
     with length of window_length, offset of window_offset and batch size of dataloader.
@@ -88,7 +89,7 @@ def get_dataloader(X, Y, window_length, window_offset, batch_size):
     return train_dataloader, test_dataloader
 
 
-def train(dataloader, model, loss_fn, optimizer):
+def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer):
     """
     Train the model (torch model or qat wrapped torch model) with loss_fn, 
     optimizer on the torch train dataloader. Returns the avg loss for training 
@@ -96,31 +97,32 @@ def train(dataloader, model, loss_fn, optimizer):
     """
     avg_loss = 0
     model.train()
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(DEVICE), y.to(DEVICE)
-        # make predictions for the current batch
-        pred = model(X)
-        pred = pred.flatten(start_dim=1)
-        # compute the loss and its gradients
-        loss = loss_fn(pred, y)
-        loss.backward()
-        # adjust the learning weights
-        optimizer.step()
-        # zero the gradients for every batch
-        optimizer.zero_grad()
-        avg_loss += loss.item()
-    avg_loss = avg_loss/len(dataloader)
+    with torch.autograd.set_detect_anomaly(True):
+        for batch, (X, y) in enumerate(dataloader):
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            # make predictions for the current batch
+            pred = model(X)
+            pred = pred.flatten(start_dim=1)
+            # compute the loss and its gradients
+            loss = loss_fn(pred, y)
+            loss.backward()
+            # adjust the learning weights
+            optimizer.step()
+            # zero the gradients for every batch
+            optimizer.zero_grad()
+            avg_loss += loss.item()
+        avg_loss = avg_loss/len(dataloader)
     return avg_loss, model, loss_fn, optimizer
 
 
-def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, normalize_input=False):
+def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tuple[int], out_channels: int, normalize_input: bool = True) -> nn.Module:
     """
     Get the torch model using the in_channels, hidden_channels, feature_size, out_channels
     The function will add the conv, bn, relu layers according to the hidden channels.
     AdaptiveAvgPool2D is added to reduce the dimension and finally a Linear layer at the last of
     the model
     """
-    def get_conv_bn_relu(in_channels, out_channels, kernel_size, padding=None, stride=1):
+    def get_conv_bn_relu(in_channels: int, out_channels: int, kernel_size: Tuple[int], padding=None, stride=1):
         # calculate the padding according to kernel if not provided
         padding = padding or (kernel_size[0]//2, kernel_size[1]//2)
         layers = []
@@ -130,11 +132,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
         layers += [nn.BatchNorm2d(num_features=out_channels)]
         layers += [nn.ReLU()]
         return layers
-
-    class ReshapeLayer(nn.Module):
-        def forward(self, x):
-            return x.reshape(x.shape[0], -1)
-
+    
     class NeuralNetwork(nn.Module):
         def __init__(self):
             super().__init__()
@@ -157,7 +155,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
 
             # flatten the layer in last_hidden_layer*feature_size
             in_fc_ch = (in_ch*feature_size[0]*feature_size[1])
-            layers += [ReshapeLayer()]
+            layers += [nn.Flatten()] 
 
             # linearize the last layer in given out_features
             layers += [nn.Linear(in_fc_ch, out_features=out_channels)]
@@ -165,7 +163,7 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
             # convert the layers in a pytorch understandable module list
             self.layers = nn.ModuleList(layers)
 
-        def forward(self, x):
+        def forward(self, x: torch.Tensor):
             for layer in self.layers:
                 x = layer(x)
             return x
@@ -174,20 +172,22 @@ def get_nn_model(in_channels, hidden_channels, feature_size, out_channels, norma
     return nn_model
 
 
-def get_qat_model(nn_model, example_input, total_epochs):
+def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs: int) -> nn.Module:
     """
     Convert the torch model to qat wrapped torch model. The function requires 
     an example input to convert the model.
     """
     # Wrap the NN Model inside the QAT Wrapper
     import simple_qconfig
-    qconfig_mapping = simple_qconfig.get_default_qconfig_mapping()
+    qconfig_type = simple_qconfig.get_default_qconfig()
+    qconfig_mapping = simple_qconfig.get_default_qconfig_mapping(qconfig_type)
     
-    QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+    # QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+    QAT_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
     return QAT_model
 
 
-def train_model(model, dataloader, total_epochs, learning_rate):
+def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, learning_rate: float) -> nn.Module:
     """
     Train the model (torch model or qat wrapped torch model) with the given train dataloader,
     total_epochs and a learning rate which will be used by lr_scheduler. CrossEntropyLoss and
@@ -210,21 +210,21 @@ def train_model(model, dataloader, total_epochs, learning_rate):
 
     return model
 
+def rename_input_node_for_onnx_model(onnx_model, input_node_name: str):
+    """Rename the node of an ONNX model"""
+    # Update graph input name.
+    onnx_model.graph.input[0].name = input_node_name
+    # Update input of the first node also to correspond.
+    onnx_model.graph.node[0].input[0] = input_node_name
+    # Check and write out the updated model
+    onnx.checker.check_model(onnx_model)
+    return onnx_model
 
-def export_model(nn_model, example_input, model_name, with_qat=False):
+def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qat: bool = False) -> nn.Module:
     """
     Export the model (torch model or qat wrapped torch model) to the given model name
     in the disk. The function requires an example input to save the model.
     """
-    def rename_input_node_for_onnx_model(onnx_model, input_node_name):
-        """Rename the node of an ONNX model"""
-        # Update graph input name.
-        onnx_model.graph.input[0].name = input_node_name
-        # Update input of the first node also to correspond.
-        onnx_model.graph.node[0].input[0] = input_node_name
-        # Check and write out the updated model
-        onnx.checker.check_model(onnx_model)
-        return onnx_model
 
     # Convert PyTorch QDQ layers to TI NPU int8 layers.
     nn_model.to(DEVICE)
@@ -233,7 +233,7 @@ def export_model(nn_model, example_input, model_name, with_qat=False):
         if hasattr(nn_model, "convert"):
             nn_model = nn_model.convert()
         else:
-            nn_model = quantize_fx.convert_fx(nn_model)
+            nn_model = quantize_fx.convert_fx(nn_model.module)
 
     if hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
@@ -242,14 +242,14 @@ def export_model(nn_model, example_input, model_name, with_qat=False):
         torch.onnx.export(nn_model, example_input, model_name)
 
     # Set input name in the ONNX model to 'input' for consistency with float model
-    # load_onnx = onnx.load(model_name)
-    # updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
-    # # save the model in disk
-    # onnx.save(updated_model, model_name)
-    # return updated_model
+    load_onnx = onnx.load(model_name)
+    updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
+    # save the model in disk
+    onnx.save(updated_model, model_name)
+    return updated_model
 
 
-def validate_model(model, test_loader, num_categories, categories_name):
+def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: int, categories_name: List[str]) -> float:
     """
     The function takes the model (torch model or qat wrapped torch model), torch dataloader
     and the num_categories to give the confusion matrix and accuracy of the model.
@@ -283,7 +283,7 @@ def validate_model(model, test_loader, num_categories, categories_name):
     return accuracy
 
 
-def validate_saved_model(model_name, dataloader):
+def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     """
     The function takes the saved onnx model, torch test dataloader to give the accuracy of the model.
     """
@@ -301,7 +301,8 @@ def validate_saved_model(model_name, dataloader):
             # add a new axis at the beginning of data
             data_point = X[idx].numpy()[np.newaxis, ...]
             # classify the data_point
-            outputs = ort_session.run(None, {'x': data_point})
+            # outputs = ort_session.run(None, {'x': data_point})
+            outputs = ort_session.run(None, {'input': data_point})
             conf_1 = outputs[0].flatten()
             # check if the classification is correct
             if conf_1.argmax(0) == Y[idx]:
@@ -309,7 +310,6 @@ def validate_saved_model(model_name, dataloader):
 
     accuracy = round(correct_predictions/total_predictions, 5)
     return accuracy
-
 
 if __name__ == '__main__':
 
@@ -351,12 +351,14 @@ if __name__ == '__main__':
         MODEL_NAME = 'qat_' + MODEL_NAME
         qat_epochs = max(NUM_EPOCHS//2, 5)
         qat_model = get_qat_model(nn_model, example_input=example_input, total_epochs=qat_epochs)
+        
         qat_learning_rate = LEARNING_RATE/10
         qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
+
         accuracy = validate_model(qat_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
-        # qat_model = quantize_fx.convert_fx(qat_model)
-        export_model(qat_model, example_input, MODEL_NAME, with_qat=True)
+
+        qat_model = export_model(qat_model, example_input, MODEL_NAME, with_qat=True)
 
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Export ONNX QAT Model Accuracy: {round(accuracy, 5)}")
