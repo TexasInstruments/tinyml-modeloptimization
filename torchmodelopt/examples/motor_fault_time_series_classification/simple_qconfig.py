@@ -1,7 +1,10 @@
 # Imports Torch
-import torch
-import torch.ao.quantization
 from torch.ao.quantization import QConfig, QConfigMapping
+import torch.ao.quantization
+from torch.ao.quantization.qconfig_mapping import _get_default_qconfig_mapping_with_default_qconfig
+import torch
+from edgeai_torchmodelopt import xnn
+
 
 def _ceil2_func(x):
     y = torch.pow(2,torch.ceil(torch.log2(x)))
@@ -34,7 +37,7 @@ def ceil2_tensor(x):
 def _adjust_qparams_power2_scale(min_val, max_val, quant_min, quant_max, scale, zero_point, eps):
     r"""Calculates the quantization parameters."""
     # make scale a power of 2 value
-    scale = ceil2_tensor(scale)
+    scale = _ceil2_tensor(scale)
     scale = torch.max(scale, eps)
     if len(torch.unique(zero_point))>1 or torch.unique(zero_point) not in (0,127):
         # adjust the zero_point based on new scale
@@ -64,7 +67,7 @@ class SimplePerChannelWeightObserver(torch.ao.quantization.PerChannelMinMaxObser
         return x_orig
 
 
-class SimpleActivationObserver(torch.ao.quantization.MovingAverageMinMaxObserver):
+class SimpleActivationObserver(torch.ao.quantization.HistogramObserver):
     def __init__(self, *args, quant_min=0, quant_max=255, qscheme=torch.per_tensor_affine, power2_scale=True, **kwargs):
         super().__init__(*args, quant_min=quant_min, quant_max=quant_max, qscheme=qscheme, **kwargs)
 		# activation quantization cannot use torch.per_channel_symmetric, it has to be torch.per_tensor_symmetric
@@ -92,17 +95,9 @@ class SimpleActivationObserver(torch.ao.quantization.MovingAverageMinMaxObserver
         return x_orig
 
 
-def get_default_qconfig_mapping(qconfig):
-    
+def get_default_qconfig_mapping():
+    weight_fakequant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(observer=SimplePerChannelWeightObserver, quant_min=-128, quant_max=127, qscheme=torch.per_channel_symmetric, dtype=torch.qint8)
+    activation_fakequant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(observer=SimpleActivationObserver, quant_min=0, quant_max=255, qscheme=torch.per_tensor_symmetric, dtype=torch.quint8)
+    qconfig = QConfig(weight=weight_fakequant, activation=activation_fakequant)
     qconfig_mapping = QConfigMapping().set_global(qconfig)
-    
     return qconfig_mapping
-
-def get_default_qconfig():
-    
-    weight_fake_quant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(observer=SimplePerChannelWeightObserver, quant_min=-128, quant_max=127, qscheme=torch.per_channel_symmetric, dtype=torch.qint8)
-    activation_fake_quant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(observer=SimpleActivationObserver, quant_min=0, quant_max=255, qscheme=torch.per_tensor_symmetric, dtype=torch.quint8)
-    
-    qconfig = QConfig(weight=weight_fake_quant, activation=activation_fake_quant)
-    
-    return qconfig

@@ -1,76 +1,6 @@
 import torch
-from torch.fx import GraphModule, Node, symbolic_trace
-
-from typing import Dict, List, Tuple
-
-def are_both_function_equal(first_function, second_function) -> bool:
-    import operator
-    operationDict = {torch.add: operator.add,torch.sub: operator.sub,torch.mul: operator.mul,
-                        operator.add: torch.add,operator.sub: torch.sub,operator.mul: torch.mul}
-    if first_function == second_function:
-        return True
-    elif hasattr(first_function, 'target') and first_function.target in operationDict.keys():
-        # if it is one  of add, sub, mul from either of operator module or torch module it should be the counter part
-        return second_function == operationDict[first_function]
-    elif first_function in operationDict.keys():
-        # if it is one  of add, sub, mul from either of operator module or torch module it should be the counter part
-        return second_function == operationDict[first_function]
-    else:
-        return False
-
-def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[torch.Node]:
-
-    main_module_nodes = list(main_module.graph.nodes)
-    main_module_length = len(main_module_nodes)
-    pattern_type_length = len(pattern_type)
-
-    main_module_idx = 0
-    pattern_type_idx = 0
-
-    matched_patterns = list()
-    next_match = -1
-
-    inp, out = None, None
-
-    def is_both_node_equal(main_module_node: torch.Node, pattern_type_node: torch.Node) -> bool:
-        both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(dict(main_module.named_modules())[main_module_node.target], pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
-        return both_node_equal
-    
-    while (main_module_idx < main_module_length):
-
-        main_module_node = main_module_nodes[main_module_idx]
-        pattern_type_node = pattern_type[pattern_type_idx]
-        # Check if both main module node and pattern node are equal or not
-        both_node_equal = is_both_node_equal(main_module_node, pattern_type_node)
-        if both_node_equal:
-            if main_module_node == pattern_type[0] and next_match == -1 and pattern_type_idx != 0:
-                # if another pattern is matching inside the current matching pattern
-                next_match = main_module_idx
-            if pattern_type_idx == 0:
-                # Node is matched with 1st node of pattern
-                inp = main_module_node
-
-            main_module_idx += 1
-            pattern_type_idx += 1
-            if pattern_type_idx == pattern_type_length:
-                # Append the nodes which matched the pattern
-                out = main_module_node
-                matched_patterns.append((inp, out))
-                next_match = -1
-        else:
-            # Reset the values as nodes didn't match
-            inp, out = None, None
-            pattern_type_idx = 0
-            if next_match == -1:
-                main_module_idx += 1
-            else:
-                main_module_idx = next_match
-                next_match = -1
-        pattern_type_idx = pattern_type_idx % pattern_type_length
-
-    return matched_patterns
+from torch import fx
+from torch.fx import GraphModule
 
 def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False):
     """
@@ -119,126 +49,79 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
     offset = torch.round(offset + shift_round_offset)
     return offset, scale, shift_mult
 
-def _get_parent_name(target: str):
-    '''Gets the name of the parent module and attribute name of the module from the target of the module'''
-    *parent, name = target.rsplit('.', 1)
-    return (parent[0] if parent else ''), name
-
-def find_hanging_nodes(main_module: GraphModule) -> List[Node]:
-    count = []
-    for node in main_module.graph.nodes:
-        if (node.op not in ('output', 'placeholder') and len(node.users) == 0):
-            count.append(node)
-    return count
-
-def remove_hanging_nodes(main_module: GraphModule) -> None:
-    while True:
-        hanging_nodes = find_hanging_nodes(main_module)
-        if len(hanging_nodes) == 0:
-            break
-        for node in hanging_nodes:
-            main_module.graph.erase_node(node)
-
+def propagate_quant_args_after_flatten(main_module : GraphModule) -> GraphModule:
+    """
+    Propagates scale and zero point arguments into a torch.quantize_per_tensor
+    after a Flatten layer. Simplifies the graph to assist TI-NPU quant conversion
+    pattern-matching (_convert_replacement in quant_fx.py).
+    :main_module: input GraphModule
+    :return: the transformed GraphModule
+    """
+    main_interpret = torch.fx.Interpreter(main_module)
+    main_module_nodes:list[fx.Node] = list(main_module.graph.nodes)
+    modules_in_main_graph = dict(main_module.named_modules())
+    main_module_node_num = len(main_module_nodes)
+    main_index = 0
+    while main_index < main_module_node_num:
+        main_node = main_module_nodes[main_index]
+        if (main_node.op == 'call_module' and \
+            isinstance(modules_in_main_graph[main_node.target],torch.nn.Flatten)):
+            if main_node.next.op == 'get_attr' and 'scale_0' in main_node.next.target and \
+               main_node.next.next.op == 'get_attr' and \
+               'zero_point_0' in main_node.next.next.target and \
+               main_node.next.next.next.op == 'call_function' and \
+               main_node.next.next.next.target == torch.quantize_per_tensor:
+                scale_node = main_node.next
+                zerop_node = main_node.next.next
+                quant_node = zerop_node.next
+                scale = main_interpret.run_node(scale_node)
+                zerop = main_interpret.run_node(zerop_node)
+                quant_node.update_arg(1, scale)
+                quant_node.update_arg(2, zerop)
+                main_module.graph.erase_node(scale_node)
+                main_module.graph.erase_node(zerop_node)
+        main_index +=1
     main_module.graph.lint()
     main_module.recompile()
+    return main_module
 
-    return None
-
-def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, start: Node, end: Node) -> None:
-    main_modules = dict(main_module.named_modules())
-    ptr = start
-    while ptr != end:
-        if ptr.op == 'call_module':
-            parent_name, name = _get_parent_name(ptr.target)
-            parent_module = main_modules[parent_name]
-            parent_module.__delattr__(name)
-
-        temp = ptr.next
-        ptr.replace_all_uses_with(new_node)
-        main_module.graph.erase_node(ptr)
-        ptr = temp
-
-    if ptr.op == 'call_module':
-        parent_name, name = _get_parent_name(end.target)
-        parent_module = main_modules[parent_name]
-        parent_module.__delattr__(name)
-
-    ptr.replace_all_uses_with(new_node)
-    main_module.graph.erase_node(end)
-    return None
-
-def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
-
-    if start == end:
-        traced_replacement = symbolic_trace(replace_module)
-        replacement_nodes = [node for node in traced_replacement.graph.nodes if node.op not in ['placeholder', 'output']]
-
-        if len(replacement_nodes) == 1:
-            # call_function or call_method operation
-            replacement_operation = replacement_nodes[0].op
-            # function call or method name
-            function_or_method = replacement_nodes[0].target
-            # Replacing in main_module graph specifying insert point after start within this scope
-            new_node = None
-            with main_module.graph.inserting_after(start):
-                # Insert a new node (replacement_node) using 'call_method' or 'call_function'
-                new_node = getattr(main_module.graph, replacement_operation)(function_or_method, start.args, start.kwargs)
-                # Replaces nodes that used the value of 'start' to now use that value new_node
-                start.replace_all_uses_with(new_node)
-            # Remove the unused 'start' node from graph as 'new_node' has replaced it
-            main_module.graph.erase_node(start)
-            main_module.graph.lint()
-            main_module.recompile()
-            return
-
-    # Get the name of replaced module
-    new_node_name = 'replaced_' + str(replace_module.__class__.__name__) + '_' + str(module_no)
-    # Add the child module in main_module
-    main_module.add_module(new_node_name, replace_module)
-
-    # Inserting in main_module graph specifying insert point before start within this scope
-    with main_module.graph.inserting_before(start):
-        # Collect all the args which aren't attribute and needs to passed to call module
-        args = []
-        for arg in start.args:
-            if type(arg) == Node and arg.op != "get_attr":
-                args.append(arg)
-
-        new_node = main_module.graph.call_module(new_node_name, tuple(args), {})
-        # Remove all the intermediate call module nodes
-        remove_intermediate_call_modules(main_module, new_node, start, end)
+def swap_flatten_quant(main_module : GraphModule) -> GraphModule:
+    """
+    Rewrite (Flatten, torch.quantize_per_tensor) as (torch.quantize_per_tensor, Flatten) so that
+    the input to the Flatten layer is quantized. This arrangement is more optimal for model
+    compilation and inference.
+    :main_module: input GraphModule
+    :returns: the transformed GraphModule
+    precondition: propagate_quant_args_after_flatten
+    """
+    main_module_nodes:list[fx.Node] = list(main_module.graph.nodes)
+    modules_in_main_graph = dict(main_module.named_modules())
+    main_module_node_num = len(main_module_nodes)
+    main_index = 0
+    while main_index < main_module_node_num:
+        main_node = main_module_nodes[main_index]
+        if main_node.op == 'call_module' and \
+            isinstance(modules_in_main_graph[main_node.target],torch.nn.Flatten):
+            assert main_index > 0 , "Internal ERROR: torch.nn.Flatten is input to graph"
+            use_keys = list(main_node.users.keys())
+            if len(use_keys) == 1 and torch.quantize_per_tensor == use_keys[0].target:
+                flatten_input_node = main_module_nodes[main_index-1]
+                orig_quant_node = use_keys[0]
+                with main_module.graph.inserting_after(flatten_input_node):
+                    new_quant_node = main_module.graph.call_function(torch.quantize_per_tensor,\
+                                            args=(main_node.args[0],) + orig_quant_node.args[1:],\
+                                                    kwargs=orig_quant_node.kwargs)
+                    main_node.replace_input_with(old_input=flatten_input_node,\
+                                                 new_input=new_quant_node)
+                    orig_quant_node.replace_all_uses_with(main_node)
+                main_module.graph.erase_node(orig_quant_node)
+                assert flatten_input_node.next == new_quant_node, \
+                    "Internal ERROR: incorrect swap_flatten_quant transformation"
+        main_index +=1
     main_module.graph.lint()
     main_module.recompile()
-    return None
+    return main_module
 
-def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
-
-    main_modules = dict(main_module.named_modules())
-    # Get the parent module name and attribute name
-    parent_name, attr_name = _get_parent_name(start.target)
-    parent_module = main_modules[parent_name]
-    # Set the attribute of parent module with the replacement module
-    parent_module.__setattr__(attr_name, replace_module)
-
-    # If there are more nodes between start and end, remove them all
-    if start != end:
-        # Initialize pointers for iteration
-        new_node = start
-        # Remove all the intermediate call module nodes
-        remove_intermediate_call_modules(main_module, new_node, start.next, end)
-    main_module.graph.lint()
-    main_module.recompile()
-    remove_hanging_nodes(main_module)
-    return None
-
-class ReduceSum(torch.nn.Module):
-    def forward(self, x):
-        return torch.sum(x, dim=(2, 3))
-            
-class RoundModule(torch.nn.Module):
-    def forward(self, x):
-        return torch.round(x)
-            
 class MultiplyModule(torch.nn.Module):
     def __init__(self, value):
         super().__init__()
@@ -423,9 +306,11 @@ class TINPUQuantizedReplacementUtils():
     def from_q_id(self, model: GraphModule, start: Node, end: Node):
         # Quantization Node
         q_node = start
-        scale = getattr(model, q_node.args[1].target)
-        zero_point = getattr(model, q_node.args[2].target)
-        # OSS Module
+        scale = q_node.args[1]
+        zero_point = q_node.args[2]
+        if hasattr(q_node.args[1], "target") and hasattr(q_node.args[2], "target"):
+            scale = getattr(model, q_node.args[1].target)
+            zero_point = getattr(model, q_node.args[2].target)
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = scale
@@ -452,21 +337,31 @@ class TINPUQuantizedReplacementUtils():
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
         oss_module.scale = scale2
         oss_module.zero_point = zero_point2
-        # Remove the scale, zero_point, quantize method and bn layer with OSS Module
-        replace_call_function_or_method(model, start, end, oss_module, self.__get_module_num())
-        return None
-    
-    def from_add(self, model: GraphModule, start: Node, end: Node):
-        args = start.args
-        scale, zero_point = 1.0, 0.0
-        named_modules = self.__get_named_modules()
-        module = named_modules[args[0].target]
-        replace_call_function_or_method(model, start, start, module, self.__get_module_num())
-        return None
+        return oss_module
 
-    def from_module_with_dq(self, model: GraphModule, start: Node, end: Node):
-        module = self.__get_named_modules()[start.target]
-        scale, zero_point = self.get_q_params(start, using='prev')
+    @staticmethod
+    def from_flatten_with_q(model, start, end):
+        """
+        Set scale and zero point of a Flatten module.
+        dequantize, torch.quantize_per_tensor, torch.nn.Flatten
+        -> torch.nn.Flatten
+        """
+        module = dict(model.named_modules())[end.target]
+        q_node =start.next
+        scale = q_node.args[1]
+        zero_point = q_node.args[2]
+        module.scale = scale
+        module.zero_point = zero_point
+        return module
+
+    @staticmethod
+    def from_module_with_dq(model, start, end):
+        module = dict(model.named_modules())[start.target]
+        # oss_module = __class__.from_dq(model, start.next, end)
+        # seq_module = torch.nn.Sequential(module, oss_module)
+        # seq_module.scale = oss_module.scale
+        # seq_module.zero_point = oss_module.zero_point
+        scale, zero_point = __class__._get_scale_zero_point_from_previous(model, start.next)
         mult_module = MultiplyModule(scale)
         mult_module.scale = scale
         mult_module.zero_point = 0.0

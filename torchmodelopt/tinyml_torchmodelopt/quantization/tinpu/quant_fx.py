@@ -55,7 +55,12 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def convert(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int
         super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
-        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
+        # Adjust QDQ graph to assist TI-NPU conversion for torch.nn.Flatten
+        self.module = quant_utils.propagate_quant_args_after_flatten(self.module)
+        self.module = quant_utils.swap_flatten_quant(self.module)
+        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: \
+            self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
+
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
             self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
@@ -84,55 +89,58 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         named_modules = dict(module.named_modules())
         batch_norm_modules = (torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d, torch.nn.BatchNorm2d)
         for name_entry, module_entry in named_modules.items():
-            if len(list(module_entry.parameters(recurse=False))) > 0 and isinstance(module_entry, batch_norm_modules):
-                return True
-        return False
+            if len(list(module_entry.parameters(recurse=False))) > 0:
+                first_module_with_params = module_entry
+                break
+            #
+        #
+        with_input_batchnorm = isinstance(first_module_with_params,
+                    (torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d, torch.nn.BatchNorm2d))
 
-    def replacement_rules(self, replacement_utils: TINPUQuantizedReplacementUtils, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
-        # List to store the pattern and corresponding replacement function
-        replacement_rules = []
-        # Batch Normalization Modules
-        if is_batch_normalized:
-            replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_q_qbn)]
-        else:
-            replacement_rules = [([torch.quantize_per_tensor, torch.nn.Identity], replacement_utils.from_q_id),]
-        # General Modules
-        replacement_rules = replacement_rules + [
-            # Pooling Modules
-            ([torch.nn.AvgPool2d], replacement_utils.from_passthrough_module),                   # OSS required
-            ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptiveavgpool2d),            # OSS required
-            ([torch.nn.MaxPool2d], replacement_utils.from_passthrough_module),                   # OSS not required
-            # Flatten Modules
-            (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),               # Removes quantization
-            # ([torch.ops.quantized.add], replacement_utils.from_add),                             # Replaces quantization
-            # ConvRelu2D Module
-            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
-            # LinearRelu Module
-            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], replacement_utils.from_qlinear_relu),
-            # Linear Module
-            ([torch.ao.nn.quantized.modules.linear.Linear], replacement_utils.from_qlinear),
-        ]
-        # Dequantization Module
-        if output_dequantize:
-            # Replaces dequantization layer with OSS
-            replacement_rules += [(['dequantize'], replacement_utils.from_dq_with_dq)]
-        else:
-            # Replaces dequantization layer with Identity
-            replacement_rules += [(['dequantize'], replacement_utils.from_dq)]
-
-        return replacement_rules
-
-    def _convert_replacement(self, module: GraphModule, pattern, *args, output_dequantize: bool = False, **kwargs) -> GraphModule:
-        # Check if the model has batch normalization
-        is_batch_normalized = self.is_batch_normalized(module)
-        # Convert the module using symbolic trace
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
-        # Get the replacement rules to change the pattern
-        replacement_utils = TINPUQuantizedReplacementUtils(module)
-        replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_dequantize)
-        # Replace the patterns using the replacement function
-        for replacement_pattern, replacement_function in replacement_rules:
-            matches = simple_chain_searcher(module, replacement_pattern)
-            for (start, end) in matches:
-                replacement_function(module, start, end)
+
+        # for qdq model
+        # replacement_entries_qdq = [
+        #    ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d,edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_conv_relu_fq),
+        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize, torch.nn.BatchNorm2d, edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_fq_bn_fq),
+        #    ([edgeai_torchmodelopt.xmodelopt.quantization.v2.AdaptiveActivationFakeQuantize], model_quant_utils.TINPUQuantizedReplacement.from_fq),
+        # }
+
+        # for converted model
+        first_entry =  [(['dequantize', torch.quantize_per_tensor, torch.nn.modules.flatten.Flatten], quant_utils.TINPUQuantizedReplacement.from_flatten_with_q)]
+        if with_input_batchnorm:
+            first_entry += [
+                ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], quant_utils.TINPUQuantizedReplacement.from_q_qbn)
+            ]
+        else:
+            first_entry += [
+                ([torch.quantize_per_tensor, torch.nn.Identity], quant_utils.TINPUQuantizedReplacement.from_q_id),
+                ([torch.quantize_per_tensor], quant_utils.TINPUQuantizedReplacement.from_q)
+            ]
+
+        # for converted model
+        replacement_entries_converted = first_entry + [
+            ([torch.nn.Sequential], quant_utils.TINPUQuantizedReplacement.from_child_module),
+            ([torch.nn.Module], quant_utils.TINPUQuantizedReplacement.from_child_module),
+            ([torch.nn.MaxPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),
+            ([torch.nn.AvgPool2d], quant_utils.TINPUQuantizedReplacement.from_avgpool2d),
+            # ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_adaptiveavgpool2d),
+            ([torch.nn.AdaptiveAvgPool2d], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),
+            # ([torch.nn.AdaptiveAvgPool2d, 'dequantize'], quant_utils.TINPUQuantizedReplacement.from_module_with_dq),
+            ([torch.nn.Flatten], quant_utils.TINPUQuantizedReplacement.from_passthrough_module),
+            ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], quant_utils.TINPUQuantizedReplacement.from_qconv_relu),
+            ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], quant_utils.TINPUQuantizedReplacement.from_qlinear_relu),
+            ([torch.ao.nn.quantized.modules.linear.Linear], quant_utils.TINPUQuantizedReplacement.from_qlinear),
+            (['dequantize'], quant_utils.TINPUQuantizedReplacement.from_dq_with_dq if output_dequantize else quant_utils.TINPUQuantizedReplacement.from_dq),
+        ]
+
+        for replacement_pattern, replacement_function in replacement_entries_converted:
+            matches = edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer.straight_type_chain_searcher(
+                module, replacement_pattern)
+            for no_of_module_replaced, (start, end) in enumerate(matches):
+                new_fq_module = replacement_function(module, start, end)
+                edgeai_torchmodelopt.xmodelopt.surgery.v2.replacer._replace_pattern(
+                    module, start, end, new_fq_module, no_of_module_replaced)
+            #
+        #
         return module
