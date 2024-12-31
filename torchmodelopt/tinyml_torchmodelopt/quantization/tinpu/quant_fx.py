@@ -99,9 +99,9 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # General Modules
         replacement_rules = replacement_rules + [
             # Pooling Modules
-            ([torch.nn.AvgPool2d], replacement_utils.from_passthrough_module),                   # OSS required
-            ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptiveavgpool2d),            # OSS required
-            ([torch.nn.MaxPool2d], replacement_utils.from_passthrough_module),                   # OSS not required
+            ([torch.nn.AvgPool2d], replacement_utils.from_avg_pool2d),                   # OSS required
+            ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptive_avg_pool2d),            # OSS required
+            ([torch.nn.MaxPool2d], replacement_utils.from_max_pool2d),                   # OSS not required
             # Flatten Modules
             (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),               # Removes quantization
             # ([torch.ops.quantized.add], replacement_utils.from_add),                             # Replaces quantization
@@ -132,7 +132,8 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_dequantize)
         # Replace the patterns using the replacement function
         for replacement_pattern, replacement_function in replacement_rules:
-            matches = simple_chain_searcher(module, replacement_pattern)
+            matches = replacement_utils.search_pattern(replacement_pattern)
             for (start, end) in matches:
-                replacement_function(module, start, end)
+                replacement_function(start, end)
+        replacement_utils.update_module(module)
         return module
