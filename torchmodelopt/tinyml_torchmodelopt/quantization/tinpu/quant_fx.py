@@ -99,12 +99,12 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         # General Modules
         replacement_rules = replacement_rules + [
             # Pooling Modules
-            ([torch.nn.AvgPool2d], replacement_utils.from_avg_pool2d),                   # OSS required
-            ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptive_avg_pool2d),            # OSS required
-            ([torch.nn.MaxPool2d], replacement_utils.from_max_pool2d),                   # OSS not required
+            ([torch.nn.AvgPool2d], replacement_utils.from_avg_pool2d),                              # OSS required
+            ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptive_avg_pool2d),             # OSS required
+            ([torch.nn.MaxPool2d], replacement_utils.from_max_pool2d),                              # OSS not required
             # Flatten Modules
-            (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),               # Removes quantization
-            # ([torch.ops.quantized.add], replacement_utils.from_add),                             # Replaces quantization
+            (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),                  # Removes quantization
+            # ([torch.ops.quantized.add], replacement_utils.from_add),
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
             # LinearRelu Module

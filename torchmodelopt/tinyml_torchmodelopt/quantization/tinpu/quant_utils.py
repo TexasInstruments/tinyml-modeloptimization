@@ -4,6 +4,7 @@ from torch.fx import GraphModule, Node, symbolic_trace
 from typing import Dict, List, Tuple
 
 def are_both_function_equal(first_function, second_function) -> bool:
+    ''' Returns the truth of value of operators of both the functions '''
     import operator
     operationDict = {torch.add: operator.add,torch.sub: operator.sub,torch.mul: operator.mul,
                         operator.add: torch.add,operator.sub: torch.sub,operator.mul: torch.mul}
@@ -19,7 +20,17 @@ def are_both_function_equal(first_function, second_function) -> bool:
         return False
 
 def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[torch.Node]:
+    '''
+    Finds the pattern_type in main_module graph and returns the list of nodes corresponding to pattern
+    The function searches the list of main_module graph nodes in `linear` fashion. It matches the type of nodes 
+    present in pattern_type or the target of main_module node.
 
+    Args:
+        `main_module`: The GraphModule in which the pattern is searched
+        `pattern_type`: The List of types or target to match
+
+    Returns the list of matched nodes
+    '''
     main_module_nodes = list(main_module.graph.nodes)
     main_module_length = len(main_module_nodes)
     pattern_type_length = len(pattern_type)
@@ -79,8 +90,8 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
     :param weight: multiplicative weight
     :param num_bits_shift: number of bits to represent the shift value. this is not the number of bits to shift (which depends on the weight value), but the number of bits to represent the shift value.
     :param num_bits_scale: number of bits to represent the scale value.
-    :param print_mse:
-    :return:
+    :param print_mse: mean squared error occurred due to scale and shift
+    :return: computed offset, scale, shift
     """
     if not isinstance(offset, torch.Tensor):
         offset = torch.tensor(offset)
@@ -120,11 +131,12 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
     return offset, scale, shift_mult
 
 def _get_parent_name(target: str):
-    '''Gets the name of the parent module and attribute name of the module from the target of the module'''
+    ''' Gets the name of the parent module and attribute name of the module from the target of the module '''
     *parent, name = target.rsplit('.', 1)
     return (parent[0] if parent else ''), name
 
 def find_hanging_nodes(main_module: GraphModule) -> List[Node]:
+    ''' Returns a list of nodes which have no users and aren't placeholder or the output nodes '''
     count = []
     for node in main_module.graph.nodes:
         if (node.op not in ('output', 'placeholder') and len(node.users) == 0):
@@ -132,6 +144,7 @@ def find_hanging_nodes(main_module: GraphModule) -> List[Node]:
     return count
 
 def remove_hanging_nodes(main_module: GraphModule) -> None:
+    ''' Remove the hanging nodes from the main_module recursively '''
     while True:
         hanging_nodes = find_hanging_nodes(main_module)
         if len(hanging_nodes) == 0:
@@ -145,6 +158,7 @@ def remove_hanging_nodes(main_module: GraphModule) -> None:
     return None
 
 def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, start: Node, end: Node) -> None:
+    ''' Removes all the call_modules and nodes present between start and end and replaces the uses with the new_node '''
     main_modules = dict(main_module.named_modules())
     ptr = start
     while ptr != end:
@@ -212,7 +226,16 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
     return None
 
 def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
+    ''' The call module associated with the start node is replaced with the replace module. All the intermediate
+    nodes are removed between start to end.
 
+    Args:
+    
+        `main_module`: The graph module in which the replacement is to be done
+        `start`: The node having the call_module
+        `end`: The node till where the nodes are to be removed
+        `replace_module`: The module which will be replaced with the start module
+    '''
     main_modules = dict(main_module.named_modules())
     # Get the parent module name and attribute name
     parent_name, attr_name = _get_parent_name(start.target)
