@@ -39,7 +39,7 @@ from typing import List, Tuple
 import edgeai_torchmodelopt
 
 from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
-from .quant_utils import TINPUQuantizedReplacementUtils, simple_chain_searcher
+from .quant_utils import TINPUQuantizedReplacementUtils
 
 class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
     def __init__(self, *args, qconfig_type=None, **kwargs) -> None:

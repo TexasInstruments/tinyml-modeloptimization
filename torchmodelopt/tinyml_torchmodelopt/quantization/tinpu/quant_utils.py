@@ -445,15 +445,6 @@ class TINPUQuantizedReplacementUtils():
 
     # Replacement Rules for quantized node at starting
     def from_q(self, start: Node, end: Node):
-        offset_scale_shift = [torch.tensor([0]), torch.tensor([1]), torch.tensor([1])]
-        oss_module = TINPUOffsetScaleShift(*offset_scale_shift, -128, 127, ndim=4, dim=1)
-        oss_module.scale = 1.0
-        oss_module.zero_point = 0.0
-        # Replace quantization method with OSS Layer
-        replace_call_function_or_method(self.module, start, end, oss_module, self.__get_module_num())
-        return None
-
-    def from_q_id(self, start: Node, end: Node):
         # Quantization Node
         q_node = start
         scale = getattr(self.module, q_node.args[1].target)
@@ -465,6 +456,10 @@ class TINPUQuantizedReplacementUtils():
         oss_module.zero_point = zero_point
         # Replace quantize function with OSS Module
         replace_call_function_or_method(self.module, start, end, oss_module, self.__get_module_num())
+        return None
+
+    def from_q_id(self, start: Node, end: Node):
+        self.from_q(start, end)
         return None
 
     def from_q_qbn(self, start: Node, end: Node):
@@ -636,13 +631,18 @@ class TINPUQuantizedReplacementUtils():
     def from_dq_with_dq(self, start: Node, end: Node):
         # Get the scale, zero_point from previous
         scale, zero_point = self.get_q_params(start, using='prev')
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, scale, num_bits_scale=8)
-        # OSS Module
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=4, dim=1)
-        oss_module.scale = scale
-        oss_module.zero_point = zero_point
-        # Replaces dequantization method with OSS Module
-        replace_call_function_or_method(self.module, start, end, oss_module, self.__get_module_num())
+        id_module = torch.nn.Identity()
+        id_module.scale = scale
+        id_module.zero_point = 0.0
+        mult_module = MultiplyModule(id_module.scale)
+        mult_module.scale = 1.0
+        mult_module.zero_point = 0.0
+        # Sequential module comprising of identity and mult module
+        seq_module = torch.nn.Sequential(id_module, mult_module)
+        seq_module.scale = mult_module.scale
+        seq_module.zero_point = mult_module.zero_point
+        # Replaces dequantization method with sequential module
+        replace_call_function_or_method(self.module, start, end, seq_module, self.__get_module_num())
         return None
 
     # Replacement Rules for Pooling Layers
