@@ -1,3 +1,4 @@
+from os import replace
 import torch
 from torch.fx import GraphModule, Node, symbolic_trace
 
@@ -217,7 +218,6 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
         for arg in start.args:
             if type(arg) == Node and arg.op != "get_attr":
                 args.append(arg)
-
         new_node = main_module.graph.call_module(new_node_name, tuple(args), {})
         # Remove all the intermediate call module nodes
         remove_intermediate_call_modules(main_module, new_node, start, end)
@@ -311,39 +311,43 @@ class TINPUQuantizedReplacementUtils():
         self.graph_quant_params: Dict[str, Dict] = dict()
         self.module_num: int = 0
 
-        if self.__check_module_before_quant():
-            nodes = self.__get_nodes()
+        if self._check_module_before_quant():
+            nodes = self._get_nodes()
             start_node, end_node = nodes[1], nodes[4]
             self.from_placeholder(start_node, end_node)
 
-        self.__propagate_quant_params()
+        self._propagate_quant_params()
 
-    def __get_nodes(self) -> List[Node]:
+    def _get_nodes(self) -> List[Node]:
         return list(self.module.graph.nodes)
     
-    def __get_named_modules(self) -> Dict:
+    def _get_named_modules(self) -> Dict:
         return dict(self.module.named_modules())
 
-    def __get_module_num(self, update: bool=True) -> int:
+    def _get_module_num(self, update: bool=True) -> int:
         if update:
             self.module_num += 1
         return self.module_num
     
-    def __check_module_before_quant(self) -> bool:
+    def _check_module_before_quant(self) -> bool:
         nodes = list(self.module.graph.nodes)
         # Checks if there is a module before quantize_per_tensor and after placeholder
-        if not (len(nodes) >= 4 and nodes[4].name.startswith('quantize_per_tensor')):
+        check = nodes[0].op == 'placeholder'
+        check = check and nodes[2].name.find('_scale_')!=-1
+        check = check and nodes[3].name.find('_zero_point_')!=-1
+        check = check and nodes[4].name.startswith('quantize_per_tensor')
+        if not check:
             return False
         return True
     
-    def __propagate_quant_params(self) -> None:
+    def _propagate_quant_params(self) -> None:
         for node in self.module.graph.nodes:
             scale, zero_point = 1.0, 0.0
 
             if node.op == 'placeholder':                                            # Inputs (x) nodes
                 scale, zero_point = 1.0, 0.0
             elif node.op == 'call_module':                                          # ConvBnRelu, AvgPool, Linear, Flatten nodes
-                named_modules = self.__get_named_modules()
+                named_modules = self._get_named_modules()
                 module = named_modules[node.target]
                 if hasattr(module, 'scale') and hasattr(module, 'zero_point'):     
                     # ConvBnRelu, Linear modules already have q_params
@@ -419,28 +423,27 @@ class TINPUQuantizedReplacementUtils():
     
     # Special Replacement rule for quantization after module at start
     def from_placeholder(self, start: Node, end: Node) -> None:
-        named_modules = self.__get_named_modules()
+        named_modules = self._get_named_modules()
         # Get the nodes involved
         main_node, quant_node = start, end
-        scale_node, zero_point_node = start.next, end.prev
-        # Find the scales to be used for AMM
-        scale = getattr(self.module, scale_node.target)
-        zero_point = getattr(self.module, zero_point_node.target)
-        # Get the module between placeholder and quantization
-        replace_module = named_modules[main_node.target]
-        replace_module.scale = scale
-        replace_module.zero_point = zero_point
-        # Create the AMM for input quantization
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point, 1/scale, num_bits_scale=8)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
-        oss_module.scale = scale
-        oss_module.zero_point = zero_point
-        # Place the AMM between the input placeholder and module
-        seq_module = torch.nn.Sequential(oss_module, replace_module)
-        seq_module.scale = scale
-        seq_module.zero_point = zero_point
-        # Call the replace module function to do the above changes
-        replace_call_module(self.module, main_node, quant_node, seq_module, self.__get_module_num())
+        args_main_node = main_node.args
+        # Get the name of the module and the module
+        preserve_module = named_modules[main_node.target]
+        # Remove and replace the module with the quantization nodes
+        main_node.replace_all_uses_with(main_node.next)
+        self.module.graph.erase_node(main_node)
+        # Pass the args of main_node
+        for idx, arg in enumerate(args_main_node):
+            quant_node.update_arg(idx, arg)
+        # Add the preserved module after the quantization node
+        with self.module.graph.inserting_after(quant_node):
+            # Add the submodule in module
+            self.module.add_submodule(main_node.target, preserve_module)
+            # Add the module in graph
+            self.module.graph.call_module(main_node.target, tuple([quant_node]))
+        # Lint and recompile the graph and module
+        self.module.graph.lint()
+        self.module.recompile()
         return None
 
     # Replacement Rules for quantized node at starting
@@ -455,16 +458,16 @@ class TINPUQuantizedReplacementUtils():
         oss_module.scale = scale
         oss_module.zero_point = zero_point
         # Replace quantize function with OSS Module
-        replace_call_function_or_method(self.module, start, end, oss_module, self.__get_module_num())
+        replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
         return None
 
     def from_q_id(self, start: Node, end: Node):
-        self.from_q(start, end)
+        self.from_q(start, start)
         return None
 
     def from_q_qbn(self, start: Node, end: Node):
         # Quantized Batch Normalization Module
-        qbn_module = self.__get_named_modules()[end.target]
+        qbn_module = self._get_named_modules()[end.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
 
         scale2 = qbn_module.scale
@@ -481,21 +484,21 @@ class TINPUQuantizedReplacementUtils():
         oss_module.scale = scale2
         oss_module.zero_point = zero_point2
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
-        replace_call_function_or_method(self.module, start, end, oss_module, self.__get_module_num())
+        replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
         return None
     
     def from_add(self, start: Node, end: Node):
         args = start.args
         scale, zero_point = 1.0, 0.0
-        named_modules = self.__get_named_modules()
+        named_modules = self._get_named_modules()
         module = named_modules[args[0].target]
-        replace_call_function_or_method(self.module, start, start, module, self.__get_module_num())
+        replace_call_function_or_method(self.module, start, start, module, self._get_module_num())
         return None
     
     # Replacement Rules for quantized Convolution and Linear Layers
     def from_qconv_relu(self, start: Node, end: Node, with_relu: bool=True):
         # zero_point_offset_for_activation = -128
-        qconvrelu_module = self.__get_named_modules()[start.target]
+        qconvrelu_module = self._get_named_modules()[start.target]
         conv_module = torch.nn.Conv2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels,
                                        kernel_size=qconvrelu_module.kernel_size, stride=qconvrelu_module.stride, 
                                        padding=qconvrelu_module.padding, dilation=qconvrelu_module.dilation, 
@@ -540,12 +543,12 @@ class TINPUQuantizedReplacementUtils():
         
         seq_module.scale = qconvrelu_module.scale
         seq_module.zero_point = qconvrelu_module.zero_point
-        replace_call_module(self.module, start, end, seq_module, self.__get_module_num())
+        replace_call_module(self.module, start, end, seq_module, self._get_module_num())
         return None
 
     def from_qlinear(self, start: Node, end: Node, with_relu: bool=False):
         # zero_point_offset_for_activation = -128
-        qlinear_module = self.__get_named_modules()[start.target]
+        qlinear_module = self._get_named_modules()[start.target]
         linear_module = torch.nn.Linear(qlinear_module.in_features, qlinear_module.out_features, bias=False)
 
         weight = qlinear_module.weight()
@@ -585,7 +588,7 @@ class TINPUQuantizedReplacementUtils():
         
         seq_module.scale = qlinear_module.scale
         seq_module.zero_point = qlinear_module.zero_point
-        replace_call_module(self.module, start, end, seq_module, self.__get_module_num())
+        replace_call_module(self.module, start, end, seq_module, self._get_module_num())
         return None
 
     def from_qlinear_relu(self, start: Node, end: Node):
@@ -594,7 +597,7 @@ class TINPUQuantizedReplacementUtils():
 
     # Replacement Rules for Flatten and Reshape Layers
     def from_flatten(self, start: Node, end: Node):
-        named_modules = self.__get_named_modules()
+        named_modules = self._get_named_modules()
         # Create a flatten module which will be used inplace of flatten method/reshape method
         replace_module = torch.nn.Flatten(*start.args[1:])
         if start.target in named_modules:
@@ -607,7 +610,7 @@ class TINPUQuantizedReplacementUtils():
         replace_module.scale = scale
         replace_module.zero_point = zero_point
         # Replaces the flatten module/flatten method with flatten module and drops the nodes till quantization node
-        replace_call_function_or_method(self.module, start, quantization_node, replace_module, self.__get_module_num())
+        replace_call_function_or_method(self.module, start, quantization_node, replace_module, self._get_module_num())
         return None
 
     def from_dq(self, start: Node, end: Node):
@@ -616,7 +619,7 @@ class TINPUQuantizedReplacementUtils():
         id_module.scale = 1.0
         id_module.zero_point = 0.0
         # Replaces the dequantization method with Identity Module
-        replace_call_function_or_method(self.module, start, end, id_module, self.__get_module_num())
+        replace_call_function_or_method(self.module, start, end, id_module, self._get_module_num())
         return None
     
     def from_dq_flatten(self, start: Node, end: Node):
@@ -626,6 +629,29 @@ class TINPUQuantizedReplacementUtils():
         flatten_node = end
         self.from_dq(dq_node, dq_node)
         self.from_flatten(flatten_node, flatten_node)
+        return None
+    
+    def from_q_module(self, start: Node, end: Node):
+        # Replaces the quantization method with OSS and removes
+        # scale, zero_point, quantization node before flatten layer
+        named_modules = self._get_named_modules()
+        # Get the scale, zero_point of the quantization part
+        scale = getattr(self.module, start.args[1].target)
+        zero_point = getattr(self.module, start.args[2].target)
+        # OSS Module
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_module.scale = scale
+        oss_module.zero_point = zero_point
+        # Get the module present after quantization
+        if end.target in named_modules:
+            # If flatten module is present in named_modules, we use the module
+            replace_module = named_modules[end.target]
+        # Sequential Module comprising of OSS and Replacement Module
+        seq_module = torch.nn.Sequential(oss_module, replace_module)
+        seq_module.scale = scale
+        seq_module.zero_point = zero_point
+        replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())      
         return None
     
     def from_dq_with_dq(self, start: Node, end: Node):
@@ -642,13 +668,13 @@ class TINPUQuantizedReplacementUtils():
         seq_module.scale = mult_module.scale
         seq_module.zero_point = mult_module.zero_point
         # Replaces dequantization method with sequential module
-        replace_call_function_or_method(self.module, start, end, seq_module, self.__get_module_num())
+        replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())
         return None
 
     # Replacement Rules for Pooling Layers
     def from_avg_pool2d(self, start: Node, end: Node):
         # AvgPool2D module
-        pool_module = self.__get_named_modules()[start.target]
+        pool_module = self._get_named_modules()[start.target]
         # OSS Module
         scale, zero_point = self.get_q_params(start, using='prev')
         if not isinstance(scale, torch.Tensor):
@@ -667,7 +693,7 @@ class TINPUQuantizedReplacementUtils():
         output_module.scale = scale
         output_module.zero_point = zero_point
         # Replace AvgPool2D with Sequential Module
-        replace_call_module(self.module, start, end, output_module, self.__get_module_num())
+        replace_call_module(self.module, start, end, output_module, self._get_module_num())
         return None
     
     def from_adaptive_avg_pool2d(self, start: Node, end: Node):
@@ -677,7 +703,7 @@ class TINPUQuantizedReplacementUtils():
         used mostly only at the model end and is not compute intensive
         '''
         # AdaptiveAvgPool2D Module
-        pool_module = self.__get_named_modules()[start.target]
+        pool_module = self._get_named_modules()[start.target]
         # OSS Module
         scale, zero_point = self.get_q_params(start, using='prev')
         if not isinstance(scale, torch.Tensor):
@@ -699,11 +725,11 @@ class TINPUQuantizedReplacementUtils():
         output_module.scale = scale
         output_module.zero_point = zero_point
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
-        replace_call_module(self.module, start, end, output_module, self.__get_module_num())
+        replace_call_module(self.module, start, end, output_module, self._get_module_num())
         return None
 
     def from_max_pool2d(self, start: Node, end: Node):
-        named_modules = self.__get_named_modules()
+        named_modules = self._get_named_modules()
         passthrough_module = named_modules[start.target]
         replace_module = passthrough_module
         # Get the scale, zero_point from quant_param dict
@@ -715,11 +741,11 @@ class TINPUQuantizedReplacementUtils():
             # Assign scale, zero_point from quant_param dict
             replace_module.scale = scale
             replace_module.zero_point = zero_point
-        replace_call_module(self.module, start, end, replace_module, self.__get_module_num())
+        replace_call_module(self.module, start, end, replace_module, self._get_module_num())
         return None
 
     def from_passthrough_module(self, start: Node, end: Node):
-        named_modules = self.__get_named_modules()
+        named_modules = self._get_named_modules()
         passthrough_module = named_modules[start.target]
         replace_module = passthrough_module
         # Get the scale, zero_point from quant_param dict
@@ -731,5 +757,5 @@ class TINPUQuantizedReplacementUtils():
             # Assign scale, zero_point from quant_param dict
             replace_module.scale = scale
             replace_module.zero_point = zero_point
-        replace_call_module(self.module, start, end, replace_module, self.__get_module_num())
+        replace_call_module(self.module, start, end, replace_module, self._get_module_num())
         return None

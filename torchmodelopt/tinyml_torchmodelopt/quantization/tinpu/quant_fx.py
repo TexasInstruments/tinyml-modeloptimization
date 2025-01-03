@@ -95,7 +95,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         if is_batch_normalized:
             replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_q_qbn)]
         else:
-            replacement_rules = [([torch.quantize_per_tensor, torch.nn.Identity], replacement_utils.from_q_id),]
+            replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_q_id),]
         # General Modules
         replacement_rules = replacement_rules + [
             # Pooling Modules
@@ -103,7 +103,8 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptive_avg_pool2d),             # OSS required
             ([torch.nn.MaxPool2d], replacement_utils.from_max_pool2d),                              # OSS not required
             # Flatten Modules
-            (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),                  # Removes quantization
+            (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),                  # Removes dequantization
+            ([torch.quantize_per_tensor, torch.nn.Module], replacement_utils.from_q_module),        # Removes quantization
             # ([torch.ops.quantized.add], replacement_utils.from_add),
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
@@ -111,6 +112,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], replacement_utils.from_qlinear_relu),
             # Linear Module
             ([torch.ao.nn.quantized.modules.linear.Linear], replacement_utils.from_qlinear),
+            ([torch.quantize_per_tensor], replacement_utils.from_q),
         ]
         # Dequantization Module
         if output_dequantize:
