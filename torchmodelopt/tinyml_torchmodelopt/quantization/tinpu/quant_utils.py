@@ -330,14 +330,12 @@ class TINPUQuantizedReplacementUtils():
         return self.module_num
     
     def _check_module_before_quant(self) -> bool:
-        nodes = list(self.module.graph.nodes)
+        nodes = self._get_nodes()
         # Checks if there is a module before quantize_per_tensor and after placeholder
-        check = nodes[0].op == 'placeholder'
-        check = check and nodes[2].name.find('_scale_')!=-1
-        check = check and nodes[3].name.find('_zero_point_')!=-1
-        check = check and nodes[4].name.startswith('quantize_per_tensor')
-        if not check:
-            return False
+        placeholder_node = nodes[0]
+        for user in placeholder_node.users:
+            if user.name.find('quantize_per_tensor') != -1:
+                return False
         return True
     
     def _propagate_quant_params(self) -> None:
@@ -414,6 +412,7 @@ class TINPUQuantizedReplacementUtils():
         return (scale, zero_point)
     
     def update_module(self, module: GraphModule) -> GraphModule:
+        remove_hanging_nodes(self.module)
         module = self.module
         return module
     
