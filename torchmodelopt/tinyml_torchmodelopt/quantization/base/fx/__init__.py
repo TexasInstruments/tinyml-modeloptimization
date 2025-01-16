@@ -31,4 +31,4 @@
 
 from .quant_utils import *
 from .qconfig_types import *
-from .quant_fx_base import *
+from .quant_base import *
