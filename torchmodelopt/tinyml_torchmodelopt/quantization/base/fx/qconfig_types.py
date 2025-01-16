@@ -78,9 +78,11 @@ def _adjust_qparams_power2_scale(min_val, max_val, quant_min, quant_max, scale, 
 
 
 class SimplePerChannelWeightObserver(torch.ao.quantization.PerChannelMinMaxObserver):
-    def __init__(self, *args, quant_min=-128, quant_max=+127, qscheme=torch.per_channel_symmetric, power2_scale=False, **kwargs):
+    def __init__(self, *args, quant_min=-128, quant_max=+127, qscheme=torch.per_channel_symmetric, power2_scale=False, range_max=None, fixed_range=False, **kwargs):
         super().__init__(*args, quant_min=quant_min, quant_max=quant_max, qscheme=qscheme, **kwargs)
         self.power2_scale = power2_scale
+        self.range_max = range_max
+        self.fixed_range = fixed_range
 
     @torch.jit.export
     def _calculate_qparams(self, min_val, max_val):
@@ -94,15 +96,30 @@ class SimplePerChannelWeightObserver(torch.ao.quantization.PerChannelMinMaxObser
 
     def forward(self, x_orig):
         x_orig = super().forward(x_orig)
+        if self.range_max is not None:
+            signed_range = torch.min(self.min_val.detach()).item() < 0.0
+            min_val = (-self.range_max) if signed_range else 0.0
+            max_val = (+self.range_max) if signed_range else (+self.range_max)
+            if self.fixed_range:
+                self.min_val.fill_(min_val)
+                self.max_val.fill_(max_val)
+            else:
+                self.min_val = torch.clamp(self.min_val, min=min_val, max=0.0)
+                self.max_val = torch.clamp(self.max_val, min=0.0, max=max_val)
+            #
+        #
         return x_orig
 
 
 class SimpleActivationObserver(torch.ao.quantization.MovingAverageMinMaxObserver):
-    def __init__(self, *args, quant_min=0, quant_max=255, qscheme=torch.per_tensor_affine, power2_scale=False, **kwargs):
+    def __init__(self, *args, quant_min=0, quant_max=255, qscheme=torch.per_tensor_affine, power2_scale=False, range_max=None, fixed_range=False, **kwargs):
         super().__init__(*args, quant_min=quant_min, quant_max=quant_max, qscheme=qscheme, **kwargs)
 		# activation quantization cannot use torch.per_channel_symmetric, it has to be torch.per_tensor_symmetric
         self.symmetric = (qscheme in (torch.per_channel_symmetric, torch.per_tensor_symmetric))
         self.power2_scale = power2_scale
+        self.range_max = range_max
+        self.fixed_range = fixed_range
+        self.freeze_observer = False
 
     @torch.jit.export
     def _calculate_qparams(self, min_val, max_val):
@@ -122,6 +139,18 @@ class SimpleActivationObserver(torch.ao.quantization.MovingAverageMinMaxObserver
 
     def forward(self, x_orig):
         x_orig = super().forward(x_orig)
+        if self.range_max is not None:
+            signed_range = torch.min(self.min_val.detach()).item() < 0.0
+            min_val = (-self.range_max) if signed_range else 0.0
+            max_val = (+self.range_max) if signed_range else (+self.range_max)
+            if self.fixed_range:
+                self.min_val.fill_(min_val)
+                self.max_val.fill_(max_val)
+            else:
+                self.min_val = torch.clamp(self.min_val, min=min_val, max=0.0)
+                self.max_val = torch.clamp(self.max_val, min=0.0, max=max_val)
+            #
+        #
         return x_orig
 
 
