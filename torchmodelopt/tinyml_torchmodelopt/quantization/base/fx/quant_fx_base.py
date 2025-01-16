@@ -138,7 +138,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
     def forward(self, *input, **kwargs):
         return self.module(*input, **kwargs)
 
-    def convert(self, inplace=False, device='cpu'):
+    def convert(self, model_qconfig_format=None, inplace=False, device='cpu'):
         self.freeze()
         # make a copy inorder not to alter the original
         model = self.module if inplace else copy.deepcopy(self.module)

@@ -36,19 +36,16 @@ from torch.fx import GraphModule
 import platform
 from typing import List, Tuple
 
-import edgeai_torchmodelopt
 
-from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
+from ..common import *
+from ..base.fx import TinyMLQuantFxBaseModule
+
 from .quant_utils import TINPUQuantizedReplacementUtils
+from .quant_convert import replace_unsupported_layers
 
-class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
+
+class TINPUTinyMLQATFxModule(TinyMLQuantFxBaseModule):
     def __init__(self, *args, qconfig_type=None, **kwargs) -> None:
-        if qconfig_type is None:
-            # there are multiple ways to specify qconfig_type - one is to use a dictionary like this.
-            # qconfig_type = qconfig_type or dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
-            #   activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric, power2_scale=True, range_max=None, fixed_range=False))
-            # another way is to use one of the predefined presets
-            qconfig_type = edgeai_torchmodelopt.xmodelopt.quantization.v2.qconfig_types.QConfigType.WC8SYMP2_AT8SYMP2
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 
@@ -58,7 +55,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
-            self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
+            self.module = replace_unsupported_layers(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
         return self
 
     def export(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
