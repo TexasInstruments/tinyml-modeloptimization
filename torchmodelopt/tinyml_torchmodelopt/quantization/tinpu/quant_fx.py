@@ -41,7 +41,7 @@ from ..common import *
 from ..base.fx import TinyMLQuantFxBaseModule
 
 from .quant_utils import TINPUQuantizedReplacementUtils
-from .quant_convert import replace_unsupported_layers
+from ... import surgery
 
 
 class TINPUTinyMLQATFxModule(TinyMLQuantFxBaseModule):
@@ -55,7 +55,7 @@ class TINPUTinyMLQATFxModule(TinyMLQuantFxBaseModule):
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
-            self.module = replace_unsupported_layers(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
+            self.module = surgery.replace_unsupported_layers(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
         return self
 
     def export(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):
