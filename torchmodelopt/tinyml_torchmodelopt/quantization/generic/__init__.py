@@ -30,10 +30,12 @@
 #################################################################################
 
 import platform
-from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
-    
 
-class GenericTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
+from ..common import *
+from ..base.fx import TinyMLQuantFxBaseModule
+
+
+class GenericTinyMLQATFxModule(TinyMLQuantFxBaseModule):
     def __init__(self, model, *args, qconfig_type=None,  **kwargs):
         # qconfig_type = None is equivalent to WC8AT8 (or DEFAULT) which uses per_tensor_affine
         # Note: activation qscheme=torch.per_tensor_affine can be converted onnx model with QOperator using onnxruntime optimization

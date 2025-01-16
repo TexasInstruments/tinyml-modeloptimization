@@ -29,16 +29,6 @@
 #
 #################################################################################
 
-
-class TinyMLQConfigFormat:
-    FLOAT_MODEL = "FLOAT_MODEL"    # original float model format
-    FAKEQ_MODEL = "FAKEQ_MODEL"    # trained FakeQ model before conversion
-    QDQ_MODEL = "QDQ_MODEL"        # converted QDQ model
-    INT_MODEL = "INT_MODEL"        # integer model
-    TINPU_INT_MODEL = "TINPU_INT_MODEL"
-    _NUM_FORMATS_ = 5
-
-    @classmethod
-    def choices(cls):
-        return [value for value in dir(cls) if not value.startswith('__') and value != 'choices']
-
+from quant_utils import *
+from qconfig_types import *
+from quant_fx_base import *

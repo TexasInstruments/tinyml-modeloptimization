@@ -30,15 +30,40 @@
 #################################################################################
 
 
-class TinyMLQConfigFormat:
-    FLOAT_MODEL = "FLOAT_MODEL"    # original float model format
-    FAKEQ_MODEL = "FAKEQ_MODEL"    # trained FakeQ model before conversion
-    QDQ_MODEL = "QDQ_MODEL"        # converted QDQ model
-    INT_MODEL = "INT_MODEL"        # integer model
-    TINPU_INT_MODEL = "TINPU_INT_MODEL"
-    _NUM_FORMATS_ = 5
+import copy
+from colorama import Fore
 
-    @classmethod
-    def choices(cls):
-        return [value for value in dir(cls) if not value.startswith('__') and value != 'choices']
+
+##################################################################################
+def add_color(string, color=None):
+    if color:
+        string = '{}{}{}'.format(color, string, Fore.RESET)
+    #
+    return string
+#
+
+def print_color(string, *args, **kwargs):
+    if 'color' in kwargs:
+        string = add_color(string, kwargs['color'])
+        kwargs_copy = copy.deepcopy(kwargs)
+        del kwargs_copy['color']
+    else:
+        kwargs_copy = kwargs
+    #
+    print(string, *args, **kwargs_copy)
+#
+
+
+print_once_dict = {}
+def print_once(string, *args, **kwargs):
+    global print_once_dict
+    if string not in list(print_once_dict.keys()):
+        print_color(string, *args, **kwargs)
+        print_once_dict[string] = True
+    #
+    return
+
+
+##################################################################################
+
 

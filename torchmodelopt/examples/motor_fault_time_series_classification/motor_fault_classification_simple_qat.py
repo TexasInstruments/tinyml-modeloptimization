@@ -176,13 +176,8 @@ def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs
     Convert the torch model to qat wrapped torch model. The function requires 
     an example input to convert the model.
     """
-    # Wrap the NN Model inside the QAT Wrapper
-    import simple_qconfig
-    qconfig_type = simple_qconfig.get_default_qconfig()
-    qconfig_mapping = simple_qconfig.get_default_qconfig_mapping(qconfig_type)
-    
     # QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
-    QAT_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
+    QAT_model = TINPUTinyMLQATFxModule(nn_model, example_inputs=example_input, total_epochs=total_epochs)
     return QAT_model
 
 
