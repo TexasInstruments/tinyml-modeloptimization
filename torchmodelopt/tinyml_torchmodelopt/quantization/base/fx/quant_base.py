@@ -34,6 +34,8 @@ import warnings
 import copy
 import torch
 from torch.ao.quantization import quantize_fx
+from torch.ao.quantization import QConfig, QConfigMapping
+
 
 from ... import common
 from . import qconfig_types
@@ -50,10 +52,10 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
 
         # split if qconfig is a comma separated list of segments
         # (qconfig will change after some epochs if this has comma separated values)
-        if qconfig_type is None:
-            qconfig_mapping = qconfig_types.get_default_qconfig_mapping()
-        elif isinstance(qconfig_type, torch.ao.quantization.QConfig):
+        if isinstance(qconfig_type, dict) or qconfig_type is None:
             qconfig_mapping = qconfig_types.get_default_qconfig_mapping(qconfig_type)
+        elif isinstance(qconfig_type, torch.ao.quantization.QConfig):
+            qconfig_mapping = QConfigMapping().set_global(qconfig_type)
         elif isinstance(qconfig_type, torch.ao.quantization.QConfigMapping):
             qconfig_mapping = qconfig_type
         else:
