@@ -45,6 +45,31 @@ from . import quant_utils
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
                  total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None):
+        '''
+        The QAT wrapper module does the preparation like in:
+        qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+
+        The api being called doesn't actually pass qconfig_type - so it will be defined inside.
+        But if you need to pass, it can be defined this way.
+        # qconfig_type supported for TINPU in F28 devices
+        qconfig_type = {
+            'weight': {
+                'bitwidth': 8,
+                'qscheme': torch.per_channel_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            },
+            'activation': {
+                'bitwidth': 8,
+                'qscheme': torch.per_tensor_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            }
+        }
+        '''
+
         super().__init__()
         if not total_epochs:
             raise RuntimeError("total_epochs must be provided")
@@ -147,7 +172,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         # convert requires cpu model
         model = model.to(torch.device(device))
         # now do the actual conversion
-        model = quantize_fx.convert_fx(model)
+        self.module = quantize_fx.convert_fx(model)
         return model
 
     def _is_observed_module(self) -> bool:
@@ -156,11 +181,11 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
 
     def export(self, example_inputs, filename='model.onnx', opset_version=17, model_qconfig_format=None,
                preserve_qdq_model=True, simplify=True, skipped_optimizers=None, device='cpu', make_copy=True,
-               is_converted=False, **export_kwargs):
+               is_converted=True, **export_kwargs):
         if self._is_observed_module():
-            model = self.convert(self, device=device, make_copy=make_copy)
+            model = self.convert(self, device=device, model_qconfig_format=model_qconfig_format, make_copy=make_copy)
         elif not is_converted:
-            model = self.convert(self, device=device, make_copy=make_copy)
+            model = self.convert(self, device=device, model_qconfig_format=model_qconfig_format, make_copy=make_copy)
         else:
             model = self.module
             warnings.warn("model has already been converted before calling export. make sure it is done correctly.")
