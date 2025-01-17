@@ -44,7 +44,7 @@ from .quant_utils import TINPUQuantizedReplacementUtils
 from ... import surgery
 
 
-class TINPUTinyMLQATFxModule(TinyMLQuantFxBaseModule):
+class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
     def __init__(self, *args, qconfig_type=None, **kwargs) -> None:
         '''
         The QAT wrapper module does the preparation like in:

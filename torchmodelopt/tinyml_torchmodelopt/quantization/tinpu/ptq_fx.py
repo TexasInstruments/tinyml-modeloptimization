@@ -29,5 +29,13 @@
 #
 #################################################################################
 
-from .qat_fx import TINPUTinyMLQATFxModule
-from .ptq_fx import TINPUTinyMLPTQFxModule
+from .quant_fx import TINPUTinyMLQuantFxModule
+
+class TINPUTinyMLPTQFxModule(TINPUTinyMLQuantFxModule):
+    '''
+    The same class can be used for PTQ.
+    (The main difference between QAT and PTQ is outside this class, i.e. PTQ does not use loss, backward() etc).
+    Any additionally enhancements that we do specifically for PTQ later can be added in this class.
+    '''
+    pass
+

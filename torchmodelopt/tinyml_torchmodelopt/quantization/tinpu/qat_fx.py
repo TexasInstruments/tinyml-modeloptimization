@@ -29,5 +29,12 @@
 #
 #################################################################################
 
-from .qat_fx import TINPUTinyMLQATFxModule
-from .ptq_fx import TINPUTinyMLPTQFxModule
+from .quant_fx import TINPUTinyMLQuantFxModule
+
+class TINPUTinyMLQATFxModule(TINPUTinyMLQuantFxModule):
+    '''
+    The QAT base class.
+    Any additionally enhancements that we do specifically only QAT later can be added in this class.
+    '''
+    pass
+
