@@ -176,14 +176,34 @@ def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs
     Convert the torch model to qat wrapped torch model. The function requires 
     an example input to convert the model.
     """
-    # Wrap the NN Model inside the QAT Wrapper
-    import simple_qconfig
-    qconfig_type = simple_qconfig.get_default_qconfig()
-    qconfig_mapping = simple_qconfig.get_default_qconfig_mapping(qconfig_type)
-    
-    # QAT_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
-    QAT_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
-    return QAT_model
+
+    '''
+    The QAT wrapper module does the preparation like in:
+    qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+    It also uses an appropriate qconfig that imposes the constraints of the hardware.
+
+    The api being called doesn't actually pass qconfig_type - so it will be defined inside. 
+    But if you need to pass, it can be defined this way.
+    # qconfig_type supported for TINPU in F28 devices
+    qconfig_type = {
+        'weight': {
+            'bitwidth': 8,
+            'qscheme': torch.per_channel_symmetric,
+            'power2_scale': True,
+            'range_max': None,
+            'fixed_range': False            
+        },
+        'activation': {
+            'bitwidth': 8,
+            'qscheme': torch.per_tensor_symmetric,
+            'power2_scale': True,
+            'range_max': None,
+            'fixed_range': False
+        }
+    }
+    '''
+    qat_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=None, example_inputs=example_input, total_epochs=total_epochs)
+    return qat_model
 
 
 def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, learning_rate: float) -> nn.Module:

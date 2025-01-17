@@ -29,5 +29,41 @@
 #
 #################################################################################
 
-from .qat_fx import TINPUTinyMLQATFxModule
-from .ptq_fx import TINPUTinyMLPTQFxModule
+
+import copy
+from colorama import Fore
+
+
+##################################################################################
+def add_color(string, color=None):
+    if color:
+        string = '{}{}{}'.format(color, string, Fore.RESET)
+    #
+    return string
+#
+
+def print_color(string, *args, **kwargs):
+    if 'color' in kwargs:
+        string = add_color(string, kwargs['color'])
+        kwargs_copy = copy.deepcopy(kwargs)
+        del kwargs_copy['color']
+    else:
+        kwargs_copy = kwargs
+    #
+    print(string, *args, **kwargs_copy)
+#
+
+
+print_once_dict = {}
+def print_once(string, *args, **kwargs):
+    global print_once_dict
+    if string not in list(print_once_dict.keys()):
+        print_color(string, *args, **kwargs)
+        print_once_dict[string] = True
+    #
+    return
+
+
+##################################################################################
+
+

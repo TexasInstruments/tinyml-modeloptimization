@@ -36,19 +36,42 @@ from torch.fx import GraphModule
 import platform
 from typing import List, Tuple
 
-import edgeai_torchmodelopt
 
-from ..common import TinyMLQConfigFormat, GenericTinyMLQATFxModuleBase
+from ..common import *
+from ..base.fx import TinyMLQuantFxBaseModule
+
 from .quant_utils import TINPUQuantizedReplacementUtils
+from ... import surgery
 
-class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
+
+class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
     def __init__(self, *args, qconfig_type=None, **kwargs) -> None:
-        if qconfig_type is None:
-            # there are multiple ways to specify qconfig_type - one is to use a dictionary like this.
-            # qconfig_type = qconfig_type or dict(weight=dict(bitwidth=8, qscheme=torch.per_channel_symmetric, power2_scale=True),
-            #   activation=dict(bitwidth=8, qscheme=torch.per_tensor_symmetric, power2_scale=True, range_max=None, fixed_range=False))
-            # another way is to use one of the predefined presets
-            qconfig_type = edgeai_torchmodelopt.xmodelopt.quantization.v2.qconfig_types.QConfigType.WC8SYMP2_AT8SYMP2
+        '''
+        The QAT wrapper module does the preparation like in:
+        qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
+        It also uses an appropriate qconfig that imposes the constraints of the hardware.
+
+        The api being called doesn't actually pass qconfig_type - so it will be defined inside.
+        But if you need to pass, it can be defined this way.
+        # qconfig_type supported for TINPU in F28 devices
+        qconfig_type = {
+            'weight': {
+                'bitwidth': 8,
+                'qscheme': torch.per_channel_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            },
+            'activation': {
+                'bitwidth': 8,
+                'qscheme': torch.per_tensor_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            }
+        }
+        '''
+
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 
@@ -58,7 +81,7 @@ class TINPUTinyMLQATFxModule(GenericTinyMLQATFxModuleBase):
         _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=output_dequantize, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLQConfigFormat.TINPU_INT_MODEL:
-            self.module = edgeai_torchmodelopt.xmodelopt.surgery.v2.convert_to_lite_fx(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
+            self.module = surgery.replace_unsupported_layers(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
         return self
 
     def export(self, *args, model_qconfig_format=TinyMLQConfigFormat.TINPU_INT_MODEL, simplify=True, skipped_optimizers=None, **kwargs):

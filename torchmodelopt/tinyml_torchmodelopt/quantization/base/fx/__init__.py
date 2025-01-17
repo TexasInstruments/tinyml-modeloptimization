@@ -29,5 +29,6 @@
 #
 #################################################################################
 
-from .qat_fx import TINPUTinyMLQATFxModule
-from .ptq_fx import TINPUTinyMLPTQFxModule
+from .quant_utils import *
+from .qconfig_types import *
+from .quant_base import *

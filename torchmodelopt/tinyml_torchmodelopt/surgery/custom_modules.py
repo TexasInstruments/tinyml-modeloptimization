@@ -29,5 +29,15 @@
 #
 #################################################################################
 
-from .qat_fx import TINPUTinyMLQATFxModule
-from .ptq_fx import TINPUTinyMLPTQFxModule
+import torch
+from torch import nn , Tensor   
+
+
+# Wrapper module for modules in nn package
+class InstaModule(nn.Module):
+    def __init__(self,preDefinedLayer:nn.Module) -> None:
+        super().__init__()
+        self.model=preDefinedLayer
+
+    def forward(self,x):
+        return self.model(x)
