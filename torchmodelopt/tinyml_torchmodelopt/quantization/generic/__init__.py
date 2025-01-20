@@ -35,7 +35,7 @@ from ..common import *
 from ..base.fx import TinyMLQuantFxBaseModule
 
 
-class GenericTinyMLQATFxModule(TinyMLQuantFxBaseModule):
+class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
     def __init__(self, model, *args, qconfig_type=None,  **kwargs):
         '''
         The QAT wrapper module does the preparation like in:
@@ -73,3 +73,12 @@ class GenericTinyMLQATFxModule(TinyMLQuantFxBaseModule):
 
     def export(self, *args, model_qconfig_format=TinyMLQConfigFormat.INT_MODEL, **kwargs):
         super().export(*args, model_qconfig_format=model_qconfig_format, **kwargs)
+
+
+class GenericTinyMLQATFxModule(GenericTinyMLQuantFxModule):
+    pass
+
+
+class GenericTinyMLPTQFxModule(GenericTinyMLQuantFxModule):
+    pass
+
