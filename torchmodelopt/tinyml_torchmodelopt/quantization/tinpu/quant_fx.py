@@ -162,3 +162,20 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
                 replacement_function(start, end)
         replacement_utils.update_module(module)
         return module
+
+
+class TINPUTinyMLQATFxModule(TINPUTinyMLQuantFxModule):
+    '''
+    The QAT base class.
+    Any additionally enhancements that we do specifically only QAT later can be added in this class.
+    '''
+    pass
+
+
+class TINPUTinyMLPTQFxModule(TINPUTinyMLQuantFxModule):
+    '''
+    The same class can be used for PTQ.
+    (The main difference between QAT and PTQ is outside this class, i.e. PTQ does not use loss, backward() etc).
+    Any additionally enhancements that we do specifically for PTQ later can be added in this class.
+    '''
+    pass

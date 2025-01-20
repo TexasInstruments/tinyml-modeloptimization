@@ -30,6 +30,20 @@
 #################################################################################
 
 
+class TinyMLQuantizationVersion():
+    NO_QUANTIZATION = 0
+    QUANTIZATION_GENERIC = 1
+    QUANTIZATION_TINPU = 2
+
+    @classmethod
+    def get_dict(cls):
+        return {k:v for k,v in cls.__dict__.items() if not k.startswith("__")}
+
+    @classmethod
+    def get_choices(cls):
+        return {v:k for k,v in cls.__dict__.items() if not k.startswith("__")}
+
+
 class TinyMLQConfigFormat:
     FLOAT_MODEL = "FLOAT_MODEL"    # original float model format
     FAKEQ_MODEL = "FAKEQ_MODEL"    # trained FakeQ model before conversion

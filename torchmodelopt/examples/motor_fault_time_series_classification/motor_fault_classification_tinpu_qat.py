@@ -171,7 +171,7 @@ def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tup
     return nn_model
 
 
-def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs: int) -> nn.Module:
+def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs: int, weight_bitwidth: int) -> nn.Module:
     """
     Convert the torch model to qat wrapped torch model. The function requires 
     an example input to convert the model.
@@ -183,26 +183,69 @@ def get_qat_model(nn_model: nn.Module, example_input: torch.Tensor, total_epochs
     It also uses an appropriate qconfig that imposes the constraints of the hardware.
 
     The api being called doesn't actually pass qconfig_type - so it will be defined inside. 
-    But if you need to pass, it can be defined this way.
-    # qconfig_type supported for TINPU in F28 devices
-    qconfig_type = {
-        'weight': {
-            'bitwidth': 8,
-            'qscheme': torch.per_channel_symmetric,
-            'power2_scale': True,
-            'range_max': None,
-            'fixed_range': False            
-        },
-        'activation': {
-            'bitwidth': 8,
-            'qscheme': torch.per_tensor_symmetric,
-            'power2_scale': True,
-            'range_max': None,
-            'fixed_range': False
-        }
-    }
+    But if you need to pass, it can be defined.
     '''
-    qat_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=None, example_inputs=example_input, total_epochs=total_epochs)
+    if weight_bitwidth == 8:
+        '''
+        # 8bit weight / activation is default - no need to specify inside.
+        qconfig_type = {
+            'weight': {
+                'bitwidth': 8,
+                'qscheme': torch.per_channel_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            },
+            'activation': {
+                'bitwidth': 8,
+                'qscheme': torch.per_tensor_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            }
+        }
+        '''
+        qconfig_type = None
+    elif weight_bitwidth == 4:
+        qconfig_type = {
+            'weight': {
+                'bitwidth': weight_bitwidth,
+                'qscheme': torch.per_channel_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            },
+            'activation': {
+                'bitwidth': 8,
+                'qscheme': torch.per_tensor_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            }
+        }
+    elif weight_bitwidth == 2:
+        qconfig_type = {
+            'weight': {
+                'bitwidth': weight_bitwidth,
+                'qscheme': torch.per_channel_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False,
+                'quant_min': -1,
+                'quant_max': 1,
+            },
+            'activation': {
+                'bitwidth': 8,
+                'qscheme': torch.per_tensor_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            }
+        }
+    else:
+        raise RuntimeError("unsupported quantization parameters")
+    #
+    qat_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
     return qat_model
 
 
@@ -341,6 +384,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     ENABLE_QAT = True  # False
+    WEIGHT_BITWIDTH = 8 #2 #4 #8
 
     X, Y = get_dataset_from_csv(CSV_FILE)
 
@@ -369,7 +413,7 @@ if __name__ == '__main__':
     if ENABLE_QAT:
         MODEL_NAME = 'qat_' + MODEL_NAME
         qat_epochs = max(NUM_EPOCHS//2, 5)
-        qat_model = get_qat_model(nn_model, example_input=example_input, total_epochs=qat_epochs)
+        qat_model = get_qat_model(nn_model, example_input=example_input, total_epochs=qat_epochs, weight_bitwidth=WEIGHT_BITWIDTH)
         
         qat_learning_rate = LEARNING_RATE/10
         qat_model = train_model(qat_model, train_loader, qat_epochs, qat_learning_rate)
