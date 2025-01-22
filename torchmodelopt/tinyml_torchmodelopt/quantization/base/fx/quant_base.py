@@ -218,3 +218,13 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             except:
                 print("Something went wrong in simplification - maybe due to multi processes, skippping this step")
         #
+
+    def disable_backward_for_ptq(self):
+        '''
+        a utility method that can be called to disable backward - useful for PTQ
+        '''
+        def backward_hook_with_error(m, g_in, g_out):
+            raise RuntimeError("backward need not be called for PTQ - aborting")
+            return m
+        #
+        self.register_full_backward_hook(backward_hook_with_error)

@@ -89,7 +89,7 @@ def get_dataloader(X: np.ndarray, Y: np.ndarray, window_length: int, window_offs
     return train_dataloader, test_dataloader
 
 
-def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer, quantization_method: str):
+def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer):
     """
     Train the model (torch model or qat wrapped torch model) with loss_fn, 
     optimizer on the torch train dataloader. Returns the avg loss for training 
@@ -104,17 +104,37 @@ def train(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer, quantiza
         pred = pred.flatten(start_dim=1)
         # compute the loss
         loss = loss_fn(pred, y)
-        if quantization_method in (None, 'QAT'):
-            # do backpropagation
-            loss.backward()
-            # adjust the learning weights
-            optimizer.step()
-            # zero the gradients for every batch
-            optimizer.zero_grad()
+        # do backpropagation
+        loss.backward()
+        # adjust the learning weights
+        optimizer.step()
+        # zero the gradients for every batch
+        optimizer.zero_grad()
 
         avg_loss += loss.item()
     avg_loss = avg_loss/len(dataloader)
     return avg_loss, model, loss_fn, optimizer
+
+
+def calibrate(dataloader: DataLoader, model: nn.Module, loss_fn):
+    """
+    Calibrate the model (torch model or qat wrapped torch model).
+    no back propagation or optimization step is in calibrate.
+    loss_fn is used here only for the purpose of information - to know how much is the loss.
+    Returns the avg loss
+    """
+    avg_loss = 0
+    model.train()
+    for batch, (X, y) in enumerate(dataloader):
+        X, y = X.to(DEVICE), y.to(DEVICE)
+        # make predictions for the current batch
+        pred = model(X)
+        pred = pred.flatten(start_dim=1)
+        # compute the loss
+        loss = loss_fn(pred, y)
+        avg_loss += loss.item()
+    avg_loss = avg_loss/len(dataloader)
+    return avg_loss, model, loss_fn, None
 
 
 def get_nn_model(in_channels: int, hidden_channels: List[int], feature_size: Tuple[int], out_channels: int, normalize_input: bool = True) -> nn.Module:
@@ -257,7 +277,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     return quant_model
 
 
-def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, learning_rate: float, quantization_method: str) -> nn.Module:
+def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, learning_rate: float) -> nn.Module:
     """
     Train the model (torch model or qat wrapped torch model) with the given train dataloader,
     total_epochs and a learning rate which will be used by lr_scheduler. CrossEntropyLoss and
@@ -272,13 +292,32 @@ def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, lea
 
     for epoch in range(total_epochs):
         # train the model for an epoch
-        loss, model, loss_fn, opti = train(dataloader, model, loss_fn, opti, quantization_method)
+        loss, model, loss_fn, opti = train(dataloader, model, loss_fn, opti)
         # change the learning rate with scheduler
         scheduler.step()
         last_lr = scheduler.get_last_lr()[0]
         print(f"Epoch: {epoch+1}\t LR: {round(last_lr,5)}\t Loss: {round(loss, 5)}")
 
     return model
+
+
+def calibrate_model(model: nn.Module, dataloader: DataLoader, total_epochs: int) -> nn.Module:
+    """
+    Train the model (torch model or qat wrapped torch model) with the given train dataloader,
+    total_epochs and a learning rate which will be used by lr_scheduler. CrossEntropyLoss and
+    SGD are used as Loss Fn and optimizer to train.
+    """
+    # loss_fn for multi class classification
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    for epoch in range(total_epochs):
+        # train the model for an epoch
+        loss, model, loss_fn, opti = calibrate(dataloader, model, loss_fn)
+        last_lr = 0
+        print(f"Epoch: {epoch+1}\t LR: {round(last_lr,5)}\t Loss: {round(loss, 5)}")
+
+    return model
+
 
 def rename_input_node_for_onnx_model(onnx_model, input_node_name: str):
     """Rename the node of an ONNX model"""
@@ -413,7 +452,7 @@ if __name__ == '__main__':
     nn_model = get_nn_model(IN_CHANNELS, hidden_channels=[8, 16, 32], feature_size=(4, 1), out_channels=NUM_CATEGORIES)
     torchinfo.summary(nn_model, input_data=example_input)
 
-    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE, quantization_method=None)
+    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
     export_model(nn_model, example_input, MODEL_NAME)
     print(f"Trained Model Accuracy: {round(accuracy, 5)}\n")
@@ -422,9 +461,13 @@ if __name__ == '__main__':
         MODEL_NAME = 'quant_' + MODEL_NAME
         qat_epochs = max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=qat_epochs, weight_bitwidth=WEIGHT_BITWIDTH, quantization_method=QUANTIZATION_METHOD)
-        
-        qat_learning_rate = LEARNING_RATE/10
-        quant_model = train_model(quant_model, train_loader, qat_epochs, qat_learning_rate, quantization_method=QUANTIZATION_METHOD)
+
+        if QUANTIZATION_METHOD == 'QAT':
+            qat_learning_rate = LEARNING_RATE / 10
+            quant_model = train_model(quant_model, train_loader, qat_epochs, qat_learning_rate)
+        elif QUANTIZATION_METHOD == 'PTQ':
+            quant_model = calibrate_model(quant_model, train_loader, qat_epochs)
+        #
 
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
