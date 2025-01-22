@@ -477,4 +477,4 @@ if __name__ == '__main__':
         print("No Quantization method is specified. Will not do quantization.")
 
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
-    print(f"Export ONNX QAT Model Accuracy: {round(accuracy, 5)}")
+    print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")

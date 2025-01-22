@@ -132,12 +132,6 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             num_observer_update_epochs = self.num_observer_update_epochs or ((self.total_epochs//2)+1)
             freeze_bn = (self.num_epochs_tracked >= num_batch_norm_update_epochs)
             freeze_observers = (self.num_epochs_tracked >= num_observer_update_epochs)
-            if freeze_bn:
-                quant_utils.print_once('Freezing BN for subsequent epochs')
-            #
-            if freeze_observers:
-                quant_utils.print_once('Freezing ranges for subsequent epochs')
-            #
             self.freeze(freeze_bn=freeze_bn, freeze_observers=freeze_observers)
             self.num_epochs_tracked += 1
         else:
@@ -148,11 +142,13 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
     def freeze(self, freeze_bn=True, freeze_observers=True):
         if freeze_observers is True:
             self.apply(torch.ao.quantization.disable_observer)
+            quant_utils.print_once('Freezing ranges for subsequent epochs')
         elif freeze_observers is False:
             self.apply(torch.ao.quantization.enable_observer)
         #
         if freeze_bn is True:
             self.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+            quant_utils.print_once('Freezing BN for subsequent epochs')
         elif freeze_bn is False:
             self.apply(torch.nn.intrinsic.qat.update_bn_stats)
         #
