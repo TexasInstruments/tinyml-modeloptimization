@@ -120,7 +120,7 @@ def calibrate(dataloader: DataLoader, model: nn.Module, loss_fn):
     """
     Calibrate the model (torch model or qat wrapped torch model).
     no back propagation or optimization step is in calibrate.
-    loss_fn is used here only for the purpose of information - to know how much is the loss.
+    loss_fn is used here only for the purpose of information - to know how good is the calibration.
     Returns the avg loss
     """
     avg_loss = 0
@@ -303,9 +303,9 @@ def train_model(model: nn.Module, dataloader: DataLoader, total_epochs: int, lea
 
 def calibrate_model(model: nn.Module, dataloader: DataLoader, total_epochs: int) -> nn.Module:
     """
-    Train the model (torch model or qat wrapped torch model) with the given train dataloader,
-    total_epochs and a learning rate which will be used by lr_scheduler. CrossEntropyLoss and
-    SGD are used as Loss Fn and optimizer to train.
+    Calibrate the model for PTQ - (torch model or qat wrapped torch model) with the given train dataloader,
+    learning_rate and loss are not needed for PTQ / calibration as backward / back propagation is not performed.
+    loss_fn is used here only for the purpose of information - to know how good is the calibration.
     """
     # loss_fn for multi class classification
     loss_fn = torch.nn.CrossEntropyLoss()
