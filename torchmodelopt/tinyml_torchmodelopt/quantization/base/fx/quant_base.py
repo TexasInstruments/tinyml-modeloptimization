@@ -44,7 +44,7 @@ from . import quant_utils
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
-                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None):
+                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None, prepare_qdq=True):
         '''
         The QAT wrapper module does the preparation like in:
         qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
@@ -87,7 +87,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             raise RuntimeError(f"invalid value for qconfig_type: {qconfig_type}")
         #
 
-        if is_qat:
+        if prepare_qdq:
             model = quantize_fx.prepare_qat_fx(model, qconfig_mapping, example_inputs)
         else:
             model = quantize_fx.prepare_fx(model, qconfig_mapping, example_inputs)
@@ -106,6 +106,9 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         # set the quantization backend - qnnpack, fbgemm, x86, onednn etc.
         self.set_quant_backend(backend)
         # related to adaptive quantization
+        if not self.is_qat:
+            self.disable_backward_for_ptq()
+        #
 
     def set_quant_backend(self, backend=None):
         if backend not in torch.backends.quantized.supported_engines:
@@ -130,7 +133,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             # set the default epoch at which freeze occurs during training (if missing)
             num_batch_norm_update_epochs = self.num_batch_norm_update_epochs or ((self.total_epochs//2)-1)
             num_observer_update_epochs = self.num_observer_update_epochs or ((self.total_epochs//2)+1)
-            freeze_bn = (self.num_epochs_tracked >= num_batch_norm_update_epochs)
+            freeze_bn = (not self.is_qat) or (self.num_epochs_tracked >= num_batch_norm_update_epochs)
             freeze_observers = (self.num_epochs_tracked >= num_observer_update_epochs)
             self.freeze(freeze_bn=freeze_bn, freeze_observers=freeze_observers)
             self.num_epochs_tracked += 1

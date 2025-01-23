@@ -89,11 +89,5 @@ class GenericTinyMLPTQFxModule(GenericTinyMLQuantFxModule):
     Any additional enhancements that we do specifically only PTQ later can be added in this class.
     '''
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.disable_backward_for_ptq()
-
-    def train(self, mode: bool = True):
-        super().train(mode)
-        # BN is always frozen for PTQ and the value passed in the argument in this method is ignored.
-        super().freeze(freeze_bn=True, freeze_observers=None)
+    def __init__(self, *args, is_qat=False, **kwargs):
+        super().__init__(*args, is_qat=is_qat, **kwargs)
