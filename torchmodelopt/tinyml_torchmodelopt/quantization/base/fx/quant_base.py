@@ -44,7 +44,7 @@ from . import quant_utils
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
-                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None):
+                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None, prepare_qdq=True):
         '''
         The QAT wrapper module does the preparation like in:
         qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
@@ -87,7 +87,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             raise RuntimeError(f"invalid value for qconfig_type: {qconfig_type}")
         #
 
-        if is_qat:
+        if prepare_qdq:
             model = quantize_fx.prepare_qat_fx(model, qconfig_mapping, example_inputs)
         else:
             model = quantize_fx.prepare_fx(model, qconfig_mapping, example_inputs)
@@ -106,6 +106,9 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         # set the quantization backend - qnnpack, fbgemm, x86, onednn etc.
         self.set_quant_backend(backend)
         # related to adaptive quantization
+        if not self.is_qat:
+            self.disable_backward_for_ptq()
+        #
 
     def set_quant_backend(self, backend=None):
         if backend not in torch.backends.quantized.supported_engines:
@@ -130,14 +133,8 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             # set the default epoch at which freeze occurs during training (if missing)
             num_batch_norm_update_epochs = self.num_batch_norm_update_epochs or ((self.total_epochs//2)-1)
             num_observer_update_epochs = self.num_observer_update_epochs or ((self.total_epochs//2)+1)
-            freeze_bn = (self.num_epochs_tracked >= num_batch_norm_update_epochs)
+            freeze_bn = (not self.is_qat) or (self.num_epochs_tracked >= num_batch_norm_update_epochs)
             freeze_observers = (self.num_epochs_tracked >= num_observer_update_epochs)
-            if freeze_bn:
-                quant_utils.print_once('Freezing BN for subsequent epochs')
-            #
-            if freeze_observers:
-                quant_utils.print_once('Freezing ranges for subsequent epochs')
-            #
             self.freeze(freeze_bn=freeze_bn, freeze_observers=freeze_observers)
             self.num_epochs_tracked += 1
         else:
@@ -148,11 +145,13 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
     def freeze(self, freeze_bn=True, freeze_observers=True):
         if freeze_observers is True:
             self.apply(torch.ao.quantization.disable_observer)
+            quant_utils.print_once('Freezing ranges for subsequent epochs')
         elif freeze_observers is False:
             self.apply(torch.ao.quantization.enable_observer)
         #
         if freeze_bn is True:
             self.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+            quant_utils.print_once('Freezing BN for subsequent epochs')
         elif freeze_bn is False:
             self.apply(torch.nn.intrinsic.qat.update_bn_stats)
         #
@@ -218,3 +217,13 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             except:
                 print("Something went wrong in simplification - maybe due to multi processes, skippping this step")
         #
+
+    def disable_backward_for_ptq(self):
+        '''
+        a utility method that can be called to disable backward - useful for PTQ
+        '''
+        def backward_hook_with_error(m, g_in, g_out):
+            raise RuntimeError("backward need not be called for PTQ - aborting")
+            return m
+        #
+        self.register_full_backward_hook(backward_hook_with_error)

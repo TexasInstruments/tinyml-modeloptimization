@@ -76,9 +76,18 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
 
 
 class GenericTinyMLQATFxModule(GenericTinyMLQuantFxModule):
+    '''
+    The QAT base class.
+    Any additional enhancements that we do specifically only QAT later can be added in this class.
+    '''
     pass
 
 
 class GenericTinyMLPTQFxModule(GenericTinyMLQuantFxModule):
-    pass
+    '''
+    The PTQ base class.
+    Any additional enhancements that we do specifically only PTQ later can be added in this class.
+    '''
 
+    def __init__(self, *args, is_qat=False, **kwargs):
+        super().__init__(*args, is_qat=is_qat, **kwargs)

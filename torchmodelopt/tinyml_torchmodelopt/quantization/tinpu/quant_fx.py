@@ -171,15 +171,16 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
 class TINPUTinyMLQATFxModule(TINPUTinyMLQuantFxModule):
     '''
     The QAT base class.
-    Any additionally enhancements that we do specifically only QAT later can be added in this class.
+    Any additional enhancements that we do specifically only QAT later can be added in this class.
     '''
     pass
 
 
 class TINPUTinyMLPTQFxModule(TINPUTinyMLQuantFxModule):
     '''
-    The same class can be used for PTQ.
-    (The main difference between QAT and PTQ is outside this class, i.e. PTQ does not use loss, backward() etc).
-    Any additionally enhancements that we do specifically for PTQ later can be added in this class.
+    The PTQ base class.
+    Any additional enhancements that we do specifically only PTQ later can be added in this class.
     '''
-    pass
+
+    def __init__(self, *args, is_qat=False, **kwargs):
+        super().__init__(*args, is_qat=is_qat, **kwargs)
