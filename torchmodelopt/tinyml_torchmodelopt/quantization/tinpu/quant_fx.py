@@ -121,20 +121,24 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_q_id),]
         # General Modules
         replacement_rules = replacement_rules + [
+            ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_qbn),
             # Pooling Modules
             ([torch.nn.AvgPool2d], replacement_utils.from_avg_pool2d),                              # OSS required
             ([torch.nn.AdaptiveAvgPool2d], replacement_utils.from_adaptive_avg_pool2d),             # OSS required
             ([torch.nn.MaxPool2d], replacement_utils.from_max_pool2d),                              # OSS not required
             # Flatten Modules
             (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),                  # Removes dequantization
-            ([torch.quantize_per_tensor, torch.nn.Module], replacement_utils.from_q_module),        # Removes quantization
-            # ([torch.ops.quantized.add], replacement_utils.from_add),
+            ([torch.quantize_per_tensor, torch.nn.Flatten], replacement_utils.from_q_module),        # Removes quantization
+            # Torch Functions
+            ([torch.ops.quantized.add_relu], replacement_utils.from_add_relu),
+            ([torch.ops.quantized.add], replacement_utils.from_add),
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
+            ([torch.ao.nn.quantized.modules.conv.Conv2d], replacement_utils.from_qconv),
             # LinearRelu Module
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], replacement_utils.from_qlinear_relu),
-            # Linear Module
             ([torch.ao.nn.quantized.modules.linear.Linear], replacement_utils.from_qlinear),
+            # Leftover Modules
             ([torch.quantize_per_tensor], replacement_utils.from_q),
         ]
         # Dequantization Module
