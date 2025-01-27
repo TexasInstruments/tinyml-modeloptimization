@@ -172,7 +172,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         model = model.to(torch.device(device))
         # now do the actual conversion
         self.module = quantize_fx.convert_fx(model)
-        return model
+        return self
 
     def _is_observed_module(self) -> bool:
         # from: torch/ao/quantization/fx/graph_module.py
