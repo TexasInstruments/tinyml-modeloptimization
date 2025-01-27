@@ -128,14 +128,17 @@ def calibrate(dataloader: DataLoader, model: nn.Module, loss_fn):
     """
     avg_loss = 0
     model.train()
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(DEVICE), y.to(DEVICE)
-        # make predictions for the current batch
-        pred = model(X)
-        pred = pred.flatten(start_dim=1)
-        # compute the loss
-        loss = loss_fn(pred, y)
-        avg_loss += loss.item()
+
+    with torch.no_grad():
+        for batch, (X, y) in enumerate(dataloader):
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            # make predictions for the current batch
+            pred = model(X)
+            pred = pred.flatten(start_dim=1)
+            # compute the loss
+            loss = loss_fn(pred, y)
+            avg_loss += loss.item()
+
     avg_loss = avg_loss/len(dataloader)
     return avg_loss, model, loss_fn, None
 
@@ -363,16 +366,16 @@ def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qu
 
     if hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
-        nn_model.export(example_input, model_name)
+        nn_model.export(example_input, model_name, input_names=['input'])
     else:
-        torch.onnx.export(nn_model, example_input, model_name)
+        torch.onnx.export(nn_model, example_input, model_name, input_names=['input'])
 
     # Set input name in the ONNX model to 'input' for consistency with float model
-    load_onnx = onnx.load(model_name)
-    updated_model = rename_input_node_for_onnx_model(load_onnx, 'input')
+    #load_onnx = onnx.load(model_name)
+    #nn_model = rename_input_node_for_onnx_model(load_onnx, 'input')
     # save the model in disk
-    onnx.save(updated_model, model_name)
-    return updated_model
+    #onnx.save(nn_model, model_name)
+    return nn_model
 
 
 def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: int, categories_name: List[str]) -> float:
@@ -383,15 +386,17 @@ def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: in
     model.eval()
     y_target = []
     y_pred = []
-    for _, (X, y) in enumerate(test_loader):
-        X, y = X.to(DEVICE), y.to(DEVICE)
-        # make prediction for the current batch
-        pred = model(X)
-        pred = pred.flatten(start_dim=1)
-        # take the max probability among the classes predicted
-        _, pred = torch.max(pred, 1)
-        y_pred.append(pred.numpy())
-        y_target.append(y.numpy())
+
+    with torch.no_grad():
+        for _, (X, y) in enumerate(test_loader):
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            # make prediction for the current batch
+            pred = model(X)
+            pred = pred.flatten(start_dim=1)
+            # take the max probability among the classes predicted
+            _, pred = torch.max(pred, 1)
+            y_pred.append(pred.numpy())
+            y_target.append(y.numpy())
 
     y_pred = np.concatenate(y_pred)
     y_target = np.concatenate(y_target)
