@@ -366,9 +366,9 @@ def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qu
 
     if hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
-        nn_model.export(example_input, model_name, input_names=['input'])
+        nn_model.export(example_input.to(DEVICE), model_name, input_names=['input'])
     else:
-        torch.onnx.export(nn_model, example_input, model_name, input_names=['input'])
+        torch.onnx.export(nn_model, example_input.to(DEVICE), model_name, input_names=['input'])
 
     # Set input name in the ONNX model to 'input' for consistency with float model
     #load_onnx = onnx.load(model_name)
@@ -395,8 +395,8 @@ def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: in
             pred = pred.flatten(start_dim=1)
             # take the max probability among the classes predicted
             _, pred = torch.max(pred, 1)
-            y_pred.append(pred.numpy())
-            y_target.append(y.numpy())
+            y_pred.append(pred.cpu().numpy())
+            y_target.append(y.cpu().numpy())
 
     y_pred = np.concatenate(y_pred)
     y_target = np.concatenate(y_target)
@@ -479,7 +479,7 @@ if __name__ == '__main__':
     nn_model = get_nn_model(IN_CHANNELS, hidden_channels=[8, 16, 32], feature_size=(4, 1), out_channels=NUM_CATEGORIES,
             normalize_input=NORMALIZE_INPUT)
 
-    torchinfo.summary(nn_model, input_data=example_input)
+    torchinfo.summary(nn_model, input_data=example_input.to(DEVICE))
 
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
@@ -501,7 +501,7 @@ if __name__ == '__main__':
         #
 
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
-        print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
+        print(f"{QUANTIZATION_METHOD} Model Accuracy: {round(accuracy, 5)}\n")
 
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
     else:
