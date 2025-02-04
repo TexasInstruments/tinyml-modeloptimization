@@ -520,7 +520,8 @@ class TINPUQuantizedReplacementUtils():
         # then modify the weight by output scale so that the output is converted to output scale
         combined_weight = combined_weight / scale
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=self.num_bits_scale)
+        # for BN represented as offset, scale and shift, the scale can be an 8bit quantity
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
         replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
