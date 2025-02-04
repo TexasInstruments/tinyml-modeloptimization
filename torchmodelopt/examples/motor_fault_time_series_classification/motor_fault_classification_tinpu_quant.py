@@ -447,7 +447,7 @@ if __name__ == '__main__':
     MODEL_NAME = "motor_fault.onnx"
     CSV_FILE = "motor_fault_dataset.csv"
     CATEGORIES_NAME = ['Normal', 'Localized', 'Erosion', 'Flaking']
-    NUM_EPOCHS = 100 #25
+    NUM_EPOCHS = 50 #25
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
     BATCH_SIZE = 64
@@ -489,13 +489,13 @@ if __name__ == '__main__':
 
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = max(NUM_EPOCHS//2, 5)
+        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs,
                 weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,
                 quantization_device_type=QUANTIZATION_DEVICE_TYPE)
 
         if QUANTIZATION_METHOD == 'QAT':
-            quant_learning_rate = (LEARNING_RATE/100) if ACTIVATION_BITWIDTH < 8 else (LEARNING_RATE/10)
+            quant_learning_rate = (LEARNING_RATE/100) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
             quant_model = train_model(quant_model, train_loader, quant_epochs, quant_learning_rate)
         elif QUANTIZATION_METHOD == 'PTQ':
             quant_model = calibrate_model(quant_model, train_loader, quant_epochs)
