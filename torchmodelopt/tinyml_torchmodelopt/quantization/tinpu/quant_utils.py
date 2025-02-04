@@ -259,8 +259,8 @@ class AdaptiveAvgPool2d(torch.nn.Module):
         shape = x.shape
         area = shape[2] * shape[3]
 
-        offset, mult, shift_mult = compute_offset_scale_shift(1, 1 / area)
-        oss = TINPUOffsetScaleShift(offset, mult, shift_mult, -128, 127, ndim=2, dim=1)
+        offset, mult, shift_mult = compute_offset_scale_shift(1, 1 / area, num_bits_scale=4)
+        oss = TINPUOffsetScaleShift(offset, mult, shift_mult, -8, 7, ndim=2, dim=1)
         
         x = self.reduce_sum(x) 
         x = self.round(x)         
@@ -336,11 +336,14 @@ class TINPUOffsetScaleShift(torch.nn.Module):
         return y
 
 class TINPUQuantizedReplacementUtils():
-    def __init__(self, model: GraphModule):
+    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int):
 
         self.module: GraphModule = model
         self.graph_quant_params: Dict[str, Dict] = dict()
         self.module_num: int = 0
+
+        self.weight_bw = weight_bw
+        self.activation_bw = activation_bw
 
         if self._check_module_before_quant():
             nodes = self._get_nodes()
@@ -489,8 +492,8 @@ class TINPUQuantizedReplacementUtils():
         scale = getattr(self.module, q_node.args[1].target)
         zero_point = getattr(self.module, q_node.args[2].target)
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=self.weight_bw)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -(2**(self.weight_bw - 1)), 2**(self.weight_bw - 1) - 1, ndim=4, dim=1)
         # Replace quantize function with OSS Module
         replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
         return None
@@ -513,8 +516,8 @@ class TINPUQuantizedReplacementUtils():
         # then modify the weight by output scale so that the output is converted to output scale
         combined_weight = combined_weight / scale
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=8)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(oss_offset, combined_weight, num_bits_scale=self.weight_bw)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.weight_bw - 1), 2**(self.weight_bw - 1) - 1, ndim=4, dim=1)
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
         replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
         return None
@@ -525,7 +528,6 @@ class TINPUQuantizedReplacementUtils():
     
     # Replacement Rules for quantized Convolution and Linear Layers
     def from_qconv_relu(self, start: Node, end: Node, with_relu: bool=True):
-        # zero_point_offset_for_activation = -128
         qconvrelu_module = self._get_named_modules()[start.target]
         conv_module = torch.nn.Conv2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels,
                                        kernel_size=qconvrelu_module.kernel_size, stride=qconvrelu_module.stride, 
@@ -561,12 +563,10 @@ class TINPUQuantizedReplacementUtils():
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult)
         
         if with_relu:
-            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
-            seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.weight_bw + 1, 2**self.weight_bw - 1)
+            seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 2**self.activation_bw - 1))
         else:
-            # This clip is left to -255, 255 here, assuming that there is an Add and ReLU after this.
-            # Otherwise it should be -128, 127
-            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -255, 255)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.weight_bw + 1, 2**self.weight_bw - 1)
             seq_module = torch.nn.Sequential(conv_module, oss_module)
         replace_call_module(self.module, start, end, seq_module, self._get_module_num())
         return None
@@ -576,7 +576,6 @@ class TINPUQuantizedReplacementUtils():
         return None
     
     def from_qlinear(self, start: Node, end: Node, with_relu: bool=False):
-        # zero_point_offset_for_activation = -128
         qlinear_module = self._get_named_modules()[start.target]
         linear_module = torch.nn.Linear(qlinear_module.in_features, qlinear_module.out_features, bias=False)
 
@@ -609,10 +608,10 @@ class TINPUQuantizedReplacementUtils():
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult)
 
         if with_relu:
-            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
-            seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 255))
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 2**self.weight_bw - 1, ndim=2, dim=1)
+            seq_module = torch.nn.Sequential(linear_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 2**self.activation_bw - 1))
         else:
-            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=2, dim=1)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.weight_bw - 1), 2**(self.weight_bw - 1) - 1, ndim=2, dim=1)
             seq_module = torch.nn.Sequential(linear_module, oss_module)
         replace_call_module(self.module, start, end, seq_module, self._get_module_num())
         return None
@@ -648,7 +647,7 @@ class TINPUQuantizedReplacementUtils():
     
     def from_add_relu(self, start: Node, end: Node, with_relu: bool=True):            
         scale, zero_point = self.get_q_params(start, using='prev')
-        add_relu_block = AddReLUBlock(0, 255, scale, zero_point*0.0, with_relu)
+        add_relu_block = AddReLUBlock(0, 2**self.activation_bw - 1, scale, zero_point*0.0, with_relu)
         replace_call_function_or_method(self.module, start, start, add_relu_block, self._get_module_num())
         return None
     
@@ -663,8 +662,8 @@ class TINPUQuantizedReplacementUtils():
         scale = getattr(self.module, start.args[1].target)
         zero_point = getattr(self.module, start.args[2].target)
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=self.weight_bw)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -(2**(self.weight_bw - 1)), 2**(self.weight_bw - 1) - 1, ndim=4, dim=1)
         # Get the module present after quantization
         if end.target in named_modules:
             # If flatten module is present in named_modules, we use the module
@@ -692,8 +691,8 @@ class TINPUQuantizedReplacementUtils():
         # Calculate the total_kernel_area from pool module kernel size
         total_kernel_area = pool_module.kernel_size[0] * pool_module.kernel_size[1]
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor((total_kernel_area+1)//2), torch.tensor(1 / total_kernel_area), num_bits_scale=8)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 255, ndim=2, dim=1)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor((total_kernel_area+1)//2), torch.tensor(1 / total_kernel_area), num_bits_scale=self.weight_bw)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 2**self.activation_bw - 1, ndim=2, dim=1)
         # Multiply Module
         mult_module = MultiplyModule(total_kernel_area)
         # Round Module
