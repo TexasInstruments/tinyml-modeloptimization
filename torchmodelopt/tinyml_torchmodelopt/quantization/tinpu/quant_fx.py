@@ -71,8 +71,8 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             }
         }
         '''
-        self.weight_bw = qconfig_type['weight']['bitwidth']
-        self.activation_bw = qconfig_type['activation']['bitwidth']
+        self.weight_bw = qconfig_type['weight']['bitwidth'] if qconfig_type else 8
+        self.activation_bw = qconfig_type['activation']['bitwidth'] if qconfig_type else 8
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 

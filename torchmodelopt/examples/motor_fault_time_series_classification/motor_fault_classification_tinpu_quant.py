@@ -215,7 +215,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     The api being called doesn't actually pass qconfig_type - so it will be defined inside. 
     But if you need to pass, it can be defined.
     '''
-    if weight_bitwidth == 8:
+    if weight_bitwidth is None or activation_bitwidth is None:
         '''
         # 8bit weight / activation is default - no need to specify inside.
         qconfig_type = {
@@ -236,6 +236,23 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
         }
         '''
         qconfig_type = None
+    elif weight_bitwidth == 8:
+        qconfig_type = {
+            'weight': {
+                'bitwidth': weight_bitwidth,
+                'qscheme': torch.per_channel_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            },
+            'activation': {
+                'bitwidth': activation_bitwidth,
+                'qscheme': torch.per_tensor_symmetric,
+                'power2_scale': True,
+                'range_max': None,
+                'fixed_range': False
+            }
+        }
     elif weight_bitwidth == 4:
         qconfig_type = {
             'weight': {
@@ -453,7 +470,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 4 #8 #4 #2
+    WEIGHT_BITWIDTH = 8 #8 #4 #2
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #True, #False
