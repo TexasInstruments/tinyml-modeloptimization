@@ -470,7 +470,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 2 #8 #4 #2
+    WEIGHT_BITWIDTH = 8 #8 #4 #2
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #True, #False
