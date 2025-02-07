@@ -274,7 +274,7 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     return None
 
 def replace_node_with_node(module: GraphModule, start: Node, end: Node):
-    named_modules = module._get_named_modules()
+    named_modules = dict(module.named_modules())
     # Get the nodes involved
     args_start_node = start.args
     # Get the name of the module and the module
@@ -286,7 +286,7 @@ def replace_node_with_node(module: GraphModule, start: Node, end: Node):
     for idx, arg in enumerate(args_start_node):
         end.update_arg(idx, arg)
     # Add the preserved module after the end node
-    with module.module.graph.inserting_after(end):
+    with module.graph.inserting_after(end):
         # Add the submodule in module
         module.add_submodule(start.target, preserve_module)
         # Add the module in graph

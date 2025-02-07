@@ -47,13 +47,7 @@ class TINPUQuantizedReplacementUtils():
         return first_quant_node
     
     def _check_module_before_quant(self) -> bool:
-        nodes = self._get_nodes()
-        # Checks if there is a module before quantize_per_tensor and after placeholder
-        placeholder_node = nodes[0]
-        for user in placeholder_node.users:
-            if user.op == 'call_module':
-                return True
-        return False
+        return self._find_first_quant_node() == None
     
     def _propagate_quant_params(self) -> None:
         for node in self.module.graph.nodes:
@@ -384,7 +378,7 @@ class TINPUQuantizedReplacementUtils():
     
     def from_adaptive_avg_pool2d(self, start: Node, end: Node):
         '''
-        The below function offloads to NPU, but only works for output size->1,1
+        The below function offloads to NPU, but only works for output size -> (1, 1)
         Otherwise we will use a generic implementation, as AdaptiveAvgPooling will be 
         used mostly only at the model end and is not compute intensive
         '''
@@ -394,20 +388,11 @@ class TINPUQuantizedReplacementUtils():
         total_kernel_area = pool_module.output_size[0] * pool_module.output_size[1]
         if total_kernel_area != 1:
             #  If output size isn't (1, 1), we will use the generic implementation
-            return self.from_passthrough_module(start, end)
+            return None
         pool_module = AdaptiveAvgPool2d(activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
         replace_call_module(self.module, start, end, pool_module, self._get_module_num())
         return None
 
     def from_max_pool2d(self, start: Node, end: Node):
-        named_modules = self._get_named_modules()
-        replace_module = named_modules[start.target]
-        replace_call_module(self.module, start, end, replace_module, self._get_module_num())
-        return None
-
-    def from_passthrough_module(self, start: Node, end: Node):
-        named_modules = self._get_named_modules()
-        replace_module = named_modules[start.target]
-        replace_call_module(self.module, start, end, replace_module, self._get_module_num())
         return None
