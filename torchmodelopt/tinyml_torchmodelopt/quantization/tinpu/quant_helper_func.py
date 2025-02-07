@@ -1,7 +1,7 @@
 import torch
 from torch.fx import GraphModule, Node, symbolic_trace
 
-from typing import List
+from typing import Dict, List
 
 def are_both_function_equal(first_function, second_function) -> bool:
     ''' Returns the truth of value of operators of both the functions '''
@@ -19,6 +19,13 @@ def are_both_function_equal(first_function, second_function) -> bool:
     else:
         return False
 
+def is_both_node_equal(named_modules: Dict, main_module_node: torch.Node, pattern_type_node: torch.Node) -> bool:
+    '''Returns the truth value of both the given nodes'''
+    both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(named_modules[main_module_node.target], pattern_type_node)
+    both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
+    both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
+    return both_node_equal
+
 def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[torch.Node]:
     '''
     Finds the pattern_type in main_module graph and returns the list of nodes corresponding to pattern
@@ -33,16 +40,11 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
     '''
     main_module_nodes = list(main_module.graph.nodes)
     main_module_length = len(main_module_nodes)
+    named_modules = dict(main_module.named_modules())
 
     main_module_idx = 0
     matched_patterns = []
 
-    def is_both_node_equal(main_module_node: torch.Node, pattern_type_node: torch.Node) -> bool:
-        both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(dict(main_module.named_modules())[main_module_node.target], pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
-        both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
-        return both_node_equal
-    
     while (main_module_idx < main_module_length):
 
         main_module_node = main_module_nodes[main_module_idx]
@@ -50,14 +52,14 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
 
         curr_node = main_module_node
 
-        if is_both_node_equal(curr_node, pattern_type[0]):
+        if is_both_node_equal(named_modules, curr_node, pattern_type[0]):
             nodes_matched.append(curr_node)
             found_all = True
             
             for pattern_node in pattern_type[1:]:
                 found = False
                 for main_node in list(curr_node.users):
-                    if is_both_node_equal(main_node, pattern_node):
+                    if is_both_node_equal(named_modules, main_node, pattern_node):
                         curr_node = main_node
                         found = True
                         continue
@@ -190,7 +192,16 @@ def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, s
     return None
 
 def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
+    ''' The nodes from start to end is replaced with the replace module. All the intermediate 
+    nodes are removed between start to end.
 
+    Args:
+        `main_module`: The graph module in which the replacement is to be done.
+        `start`: The node where the replace module will be inserted.
+        `end`: The node till where the nodes are to be removed.
+        `replace_module`: The module which will be replaced with the start module.
+        `module_no`: A number denoting the number of modules replaced till now. (Unique name for node)
+    '''
     if start == end:
         traced_replacement = symbolic_trace(replace_module)
         replacement_nodes = [node for node in traced_replacement.graph.nodes if node.op not in ['placeholder', 'output']]
@@ -237,11 +248,10 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     nodes are removed between start to end.
 
     Args:
-    
-        `main_module`: The graph module in which the replacement is to be done
-        `start`: The node having the call_module
-        `end`: The node till where the nodes are to be removed
-        `replace_module`: The module which will be replaced with the start module
+        `main_module`: The graph module in which the replacement is to be done.
+        `start`: The node having the call_module.
+        `end`: The node till where the nodes are to be removed.
+        `replace_module`: The module which will be replaced with the start module.
     '''
     main_modules = dict(main_module.named_modules())
     # Get the parent module name and attribute name
