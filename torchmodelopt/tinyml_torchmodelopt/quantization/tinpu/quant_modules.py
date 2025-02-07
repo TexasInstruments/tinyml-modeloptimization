@@ -5,6 +5,17 @@ class ReduceSum(torch.nn.Module):
     def forward(self, x):
         return torch.sum(x, dim=(2, 3))
 
+class RoundModule(torch.nn.Module):
+    def forward(self, x):
+        return torch.round(x)
+            
+class MultiplyModule(torch.nn.Module):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+    def forward(self, x):
+        return torch.mul(x, self.value)
+
 class AdaptiveAvgPool2d(torch.nn.Module):
     def __init__(self, *args, activation_bw=8, num_bits_scale=1, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,17 +36,6 @@ class AdaptiveAvgPool2d(torch.nn.Module):
         x = oss(x)     
         return x
     
-class RoundModule(torch.nn.Module):
-    def forward(self, x):
-        return torch.round(x)
-            
-class MultiplyModule(torch.nn.Module):
-    def __init__(self, value):
-        super().__init__()
-        self.value = value
-    def forward(self, x):
-        return torch.mul(x, self.value)
-
 class AddReLUBlock(torch.nn.Module):
     def __init__(self, min_relu_clip, max_relu_clip, scale, zero_point, with_relu, num_bits_scale=1):
         super().__init__()
