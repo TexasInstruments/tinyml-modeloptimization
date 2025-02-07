@@ -21,6 +21,7 @@ class TINPUQuantizedReplacementUtils():
             self.from_placeholder(start_node, end_node)
 
         self._propagate_quant_params()
+        self.from_first_layer()
 
     def _get_nodes(self) -> List[Node]:
         return list(self.module.graph.nodes)
@@ -32,6 +33,18 @@ class TINPUQuantizedReplacementUtils():
         if update:
             self.module_num += 1
         return self.module_num
+    
+    def _find_first_quant_node(self):
+        first_quant_node = None
+        nodes = self._get_nodes()
+        named_modules = self._get_named_modules()
+
+        placeholder_node = nodes[0]
+        for user in placeholder_node.users:
+            if is_both_node_equal(named_modules, user, torch.quantize_per_tensor):
+                first_quant_node = user
+                break
+        return first_quant_node
     
     def _check_module_before_quant(self) -> bool:
         nodes = self._get_nodes()
@@ -134,6 +147,22 @@ class TINPUQuantizedReplacementUtils():
         replace_node_with_node(self.module, main_node, quant_node)
         return None
 
+    # for the initial layers handling quantize_per_tensor
+    def from_first_layer(self):
+        first_quant_node = self._find_first_quant_node()
+        user = list(first_quant_node.users)[0]
+        named_modules = self._get_named_modules()
+
+        if is_both_node_equal(named_modules, user, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d):
+            self.from_q_qbn(first_quant_node, user)
+        elif is_both_node_equal(named_modules, user, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d):
+            self.from_q_id(first_quant_node, user)
+        elif is_both_node_equal(named_modules, user, torch.nn.Identity):
+            self.from_q(first_quant_node, user)
+        else:
+            pass
+        return None
+    
     # Replacement Rules for quantized node at starting
     def from_q(self, start: Node, end: Node):
         # Quantization Node
@@ -366,7 +395,7 @@ class TINPUQuantizedReplacementUtils():
         if total_kernel_area != 1:
             #  If output size isn't (1, 1), we will use the generic implementation
             return self.from_passthrough_module(start, end)
-        pool_module = AdaptiveAvgPool2d(num_bits_scale=self.num_bits_scale)
+        pool_module = AdaptiveAvgPool2d(activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
         replace_call_module(self.module, start, end, pool_module, self._get_module_num())
         return None

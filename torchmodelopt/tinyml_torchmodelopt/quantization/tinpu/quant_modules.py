@@ -6,18 +6,19 @@ class ReduceSum(torch.nn.Module):
         return torch.sum(x, dim=(2, 3))
 
 class AdaptiveAvgPool2d(torch.nn.Module):
-    def __init__(self, *args, num_bits_scale=1, **kwargs):
+    def __init__(self, *args, activation_bw=8, num_bits_scale=1, **kwargs):
         super().__init__(*args, **kwargs)
         self.round = RoundModule()
         self.reduce_sum = ReduceSum()
         self.num_bits_scale = num_bits_scale
+        self.activation_bw = activation_bw
 
     def forward(self, x):
         shape = x.shape
         area = shape[2] * shape[3]
 
         offset, mult, shift_mult = compute_offset_scale_shift(1, 1 / area, num_bits_scale=self.num_bits_scale)
-        oss = TINPUOffsetScaleShift(offset, mult, shift_mult, -8, 7, ndim=2, dim=1)
+        oss = TINPUOffsetScaleShift(offset, mult, shift_mult, -(2**(self.activation_bw - 1)), 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
         
         x = self.reduce_sum(x) 
         x = self.round(x)         

@@ -114,14 +114,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
 
     def replacement_rules(self, replacement_utils: TINPUQuantizedReplacementUtils, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
         # List to store the pattern and corresponding replacement function
-        replacement_rules = []
-        # Batch Normalization Modules
-        if is_batch_normalized:
-            replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_q_qbn)]
-        else:
-            replacement_rules = [([torch.quantize_per_tensor, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_q_id),]
-        # General Modules
-        replacement_rules = replacement_rules + [
+        replacement_rules = [
             ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_qbn),
             # Pooling Modules
             ([torch.nn.AvgPool2d], replacement_utils.from_avg_pool2d),                              # OSS required
