@@ -166,7 +166,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
 
     def convert(self, model_qconfig_format=None, inplace=False, device='cpu'):
         self.freeze()
-        # make a copy inorder not to alter the original
+        # make a copy in order not to alter the original
         model = self.module if inplace else copy.deepcopy(self.module)
         # convert requires cpu model
         model = model.to(torch.device(device))
@@ -215,7 +215,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
                 onnx_model, check = simplify(onnx_model, skipped_optimizers=skipped_optimizers)
                 onnx.save(onnx_model, filename)
             except:
-                print("Something went wrong in simplification - maybe due to multi processes, skippping this step")
+                print("Something went wrong in simplification - maybe due to multi processes, skipping this step")
         #
 
     def disable_backward_for_ptq(self):
