@@ -35,19 +35,33 @@ class TINPUQuantizedReplacementUtils():
         return self.module_num
     
     def _find_first_quant_node(self):
-        first_quant_node = None
+        first_quant_node = []
         nodes = self._get_nodes()
         named_modules = self._get_named_modules()
 
         placeholder_node = nodes[0]
-        for user in placeholder_node.users:
-            if is_both_node_equal(named_modules, user, torch.quantize_per_tensor):
-                first_quant_node = user
-                break
+        # add the placeholder node in bfs queue
+        bfs = [placeholder_node]
+
+        while bfs.__len__() != 0:
+            node = bfs[0]
+            bfs.pop(0)
+            # check if the node is a quant node, if not 
+            # find where it is present recursively after placeholder
+            if is_both_node_equal(named_modules, node, torch.quantize_per_tensor):
+                first_quant_node.append(node)
+            else:
+                bfs += list(node.users)
         return first_quant_node
     
     def _check_module_before_quant(self) -> bool:
-        return self._find_first_quant_node() == None
+        nodes = self._get_nodes()
+        # Checks if there is a module before quantize_per_tensor and after placeholder
+        placeholder_node = nodes[0]
+        for user in placeholder_node.users:
+            if user.op == 'call_module':
+                return True
+        return False
     
     def _propagate_quant_params(self) -> None:
         for node in self.module.graph.nodes:
@@ -143,18 +157,20 @@ class TINPUQuantizedReplacementUtils():
 
     # for the initial layers handling quantize_per_tensor
     def from_first_layer(self):
-        first_quant_node = self._find_first_quant_node()
-        user = list(first_quant_node.users)[0]
-        named_modules = self._get_named_modules()
+        first_quant_nodes = self._find_first_quant_node()
 
-        if is_both_node_equal(named_modules, user, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d):
-            self.from_q_qbn(first_quant_node, user)
-        elif is_both_node_equal(named_modules, user, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d):
-            self.from_q_id(first_quant_node, user)
-        elif is_both_node_equal(named_modules, user, torch.nn.Identity):
-            self.from_q(first_quant_node, user)
-        else:
-            pass
+        for first_quant_node in first_quant_nodes:
+            user = list(first_quant_node.users)[0]
+            named_modules = self._get_named_modules()
+
+            if is_both_node_equal(named_modules, user, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d):
+                self.from_q_qbn(first_quant_node, user)
+            elif is_both_node_equal(named_modules, user, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d):
+                self.from_q_id(first_quant_node, user)
+            elif is_both_node_equal(named_modules, user, torch.nn.Identity):
+                self.from_q(first_quant_node, user)
+            else:
+                pass
         return None
     
     # Replacement Rules for quantized node at starting
