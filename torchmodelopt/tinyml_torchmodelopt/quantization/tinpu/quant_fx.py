@@ -158,7 +158,6 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             matches = replacement_utils.search_pattern(replacement_pattern)
             for (start, end) in matches:
                 replacement_function(start, end)
-        print(replacement_utils._get_nodes())
         replacement_utils.update_module(module)
         return module
 

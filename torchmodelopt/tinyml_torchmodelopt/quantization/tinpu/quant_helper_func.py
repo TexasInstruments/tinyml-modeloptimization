@@ -1,3 +1,4 @@
+from ast import mod
 import torch
 from torch.fx import GraphModule, Node, symbolic_trace
 
@@ -151,6 +152,12 @@ def find_hanging_nodes(main_module: GraphModule) -> List[Node]:
             count.append(node)
     return count
 
+def lint_and_recompile(main_module: GraphModule) -> None:
+    ''' Lint and recompile the main_module '''
+    main_module.graph.lint()
+    main_module.recompile()
+    return None
+
 def remove_hanging_nodes(main_module: GraphModule) -> None:
     ''' Remove the hanging nodes from the main_module recursively '''
     while True:
@@ -160,9 +167,7 @@ def remove_hanging_nodes(main_module: GraphModule) -> None:
         for node in hanging_nodes:
             main_module.graph.erase_node(node)
 
-    main_module.graph.lint()
-    main_module.recompile()
-
+    lint_and_recompile(main_module)
     return None
 
 def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, start: Node, end: Node) -> None:
@@ -220,8 +225,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
                 start.replace_all_uses_with(new_node)
             # Remove the unused 'start' node from graph as 'new_node' has replaced it
             main_module.graph.erase_node(start)
-            main_module.graph.lint()
-            main_module.recompile()
+            lint_and_recompile(main_module)
             return
 
     # Get the name of replaced module
@@ -232,6 +236,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
     else:
         new_node_name += str(replace_module.__class__.__name__.lower()) + '_'
     new_node_name += str(module_no)
+    new_node_name = new_node_name.replace('tinpuoffsetscaleshift', 'oss')
     # Add the child module in main_module
     main_module.add_module(new_node_name, replace_module)
 
@@ -245,8 +250,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
         new_node = main_module.graph.call_module(new_node_name, tuple(args), {})
         # Remove all the intermediate call module nodes
         remove_intermediate_call_modules(main_module, new_node, start, end)
-    main_module.graph.lint()
-    main_module.recompile()
+    lint_and_recompile(main_module)
     return None
 
 def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
@@ -271,6 +275,7 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
             new_node_name += str(module.__class__.__name__.lower()) + '_'
     else:
         new_node_name += str(replace_module.__class__.__name__.lower()) + '_'
+    new_node_name = new_node_name.replace('tinpuoffsetscaleshift', 'oss')
     start.name = new_node_name + str(module_no)
     # If there are more nodes between start and end, remove them all
     if start != end:
@@ -280,8 +285,6 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
         users = list(start.users)
         for user in users:
             remove_intermediate_call_modules(main_module, new_node, user, end)
-    main_module.graph.lint()
-    main_module.recompile()
     remove_hanging_nodes(main_module)
     return None
 
@@ -296,6 +299,13 @@ def remove_node_from_module(module: GraphModule, node: Node):
     node_before = node.args[0]
     node.replace_all_uses_with(node_before)
     module.graph.erase_node(node)
+    named_modules = dict(module.named_modules())
+    if hasattr(node, 'target') and node.target in named_modules:
+        module.delete_submodule(node.target)
+    if node.name in module.graph._graph_namespace._used_names:
+        module.graph._graph_namespace._used_names.remove(node.name)
+    # Lint and recompile the graph and module
+    lint_and_recompile(module)
     return None
 
 def add_module_after_node(module: GraphModule, start: Node, end: Node, preserve_module: torch.nn.Module):
@@ -317,6 +327,5 @@ def add_node_after_node(module: GraphModule, start: Node, end: Node):
     # Add the preserved module after the end node
     add_module_after_node(module, start, end, preserve_module)
     # Lint and recompile the graph and module
-    module.graph.lint()
-    module.recompile()
+    lint_and_recompile(module)
     return None
