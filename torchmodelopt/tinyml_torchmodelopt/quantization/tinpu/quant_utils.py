@@ -128,16 +128,27 @@ class TINPUQuantizedReplacementUtils():
     def get_q_params(self, node: Node, using: str='prev') -> Tuple[float]:
         scale, zero_point = 1.0, 0.0
         if using == 'prev':
-            prev_node: Node = self.graph_quant_params[node.name]['prev'][0]
-            scale = self.graph_quant_params[prev_node.name]['scale']
-            zero_point = self.graph_quant_params[prev_node.name]['zero_point']
+            node_name = node.target.replace('.', '_')
+            prev_node: Node = self.graph_quant_params[node_name]['prev'][0]
+            if isinstance(prev_node.target, str):
+                prev_node_name = prev_node.target.replace('.', '_')
+            else:
+                prev_node_name = prev_node.name
+            scale = self.graph_quant_params[prev_node_name]['scale']
+            zero_point = self.graph_quant_params[prev_node_name]['zero_point']
         if using == 'this':
-            scale = self.graph_quant_params[node.name]['scale']
-            zero_point = self.graph_quant_params[node.name]['zero_point']
+            node_name = node.target.replace('.', '_')
+            scale = self.graph_quant_params[node_name]['scale']
+            zero_point = self.graph_quant_params[node_name]['zero_point']
         if using == 'next':
-            next_node: Node = self.graph_quant_params[node.name]['next'][0]
-            scale = self.graph_quant_params[next_node.name]['scale']
-            zero_point = self.graph_quant_params[next_node.name]['zero_point']
+            node_name = node.target.replace('.', '_')
+            next_node: Node = self.graph_quant_params[node_name]['next'][0]
+            if isinstance(next_node.target, str):
+                next_node_name = next_node.target.replace('.', '_')
+            else:
+                next_node_name = next_node.name
+            scale = self.graph_quant_params[next_node_name]['scale']
+            zero_point = self.graph_quant_params[next_node_name]['zero_point']
         return (scale, zero_point)
     
     def update_module(self, module: GraphModule) -> GraphModule:
@@ -152,7 +163,7 @@ class TINPUQuantizedReplacementUtils():
     # Special Replacement rule for quantization after module at start
     def from_placeholder(self, start: Node, end: Node) -> None:
         main_node, quant_node = start, end
-        replace_node_with_node(self.module, main_node, quant_node)
+        add_node_after_node(self.module, main_node, quant_node)
         return None
 
     # for the initial layers handling quantize_per_tensor

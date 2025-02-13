@@ -225,7 +225,13 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
             return
 
     # Get the name of replaced module
-    new_node_name = 'replaced_' + str(replace_module.__class__.__name__) + '_' + str(module_no)
+    new_node_name = ''
+    if hasattr(replace_module, '__iter__'):
+        for module in replace_module:
+            new_node_name += str(module.__class__.__name__.lower()) + '_'
+    else:
+        new_node_name += str(replace_module.__class__.__name__.lower()) + '_'
+    new_node_name += str(module_no)
     # Add the child module in main_module
     main_module.add_module(new_node_name, replace_module)
 
@@ -259,7 +265,13 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     parent_module = main_modules[parent_name]
     # Set the attribute of parent module with the replacement module
     parent_module.__setattr__(attr_name, replace_module)
-
+    new_node_name = ''
+    if hasattr(replace_module, '__iter__'):
+        for module in replace_module:
+            new_node_name += str(module.__class__.__name__.lower()) + '_'
+    else:
+        new_node_name += str(replace_module.__class__.__name__.lower()) + '_'
+    start.name = new_node_name + str(module_no)
     # If there are more nodes between start and end, remove them all
     if start != end:
         # Initialize pointers for iteration
@@ -273,26 +285,37 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     remove_hanging_nodes(main_module)
     return None
 
-def replace_node_with_node(module: GraphModule, start: Node, end: Node):
+def get_node_from_module(module: GraphModule, node: Node):
     named_modules = dict(module.named_modules())
-    # Get the nodes involved
-    args_start_node = start.args
-    # Get the name of the module and the module
-    preserve_module = named_modules[start.target]
-    # Remove and replace the module with the end nodes
-    start.replace_all_uses_with(start.next)
-    module.graph.erase_node(start)
-    # Pass the args of start
-    for idx, arg in enumerate(args_start_node):
-        end.update_arg(idx, arg)
-    # Add the preserved module after the end node
+    preserve_module = None
+    if hasattr(node, 'target') and node.target in named_modules:
+        preserve_module = named_modules[node.target]
+    return preserve_module
+
+def remove_node_from_module(module: GraphModule, node: Node):
+    node_before = node.args[0]
+    node.replace_all_uses_with(node_before)
+    module.graph.erase_node(node)
+    return None
+
+def add_module_after_node(module: GraphModule, start: Node, end: Node, preserve_module: torch.nn.Module):
     with module.graph.inserting_after(end):
         # Add the submodule in module
-        module.add_submodule(start.target, preserve_module)
+        if hasattr(start, 'target'):
+            module.add_submodule(start.target, preserve_module)
         # Add the module in graph
-        new_node = module.graph.call_module(start.target, tuple([end]))
+        new_node = module.graph.call_module(start.target)
         end.replace_all_uses_with(new_node)
-        new_node.update_arg(0, end) 
+        new_node.insert_arg(0, end) 
+    return None
+
+def add_node_after_node(module: GraphModule, start: Node, end: Node):
+    # Get the module involved
+    preserve_module = get_node_from_module(module, start)
+    # Remove the node and replace it's use with previous node
+    remove_node_from_module(module, start)
+    # Add the preserved module after the end node
+    add_module_after_node(module, start, end, preserve_module)
     # Lint and recompile the graph and module
     module.graph.lint()
     module.recompile()
