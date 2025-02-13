@@ -204,7 +204,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             model = self.convert(self, device=device, model_qconfig_format=model_qconfig_format, make_copy=make_copy)
         else:
             model = self.module
-            # warnings.warn("model has already been converted before calling export. make sure it is done correctly.")
+            warnings.warn("model has already been converted before calling export. make sure it is done correctly.")
 
         if model_qconfig_format == common.TinyMLModelQConfigFormat.INT_MODEL:
             # # Convert QDQ format to Int8 format
