@@ -79,8 +79,6 @@ class TINPUQuantizedReplacementUtils():
                     new_node_name = node_module.__class__.__name__
                 node.name = new_node_name.lower() + str(count)
                 count += 1
-        print(self._get_nodes())
-
         return None
     
     def _propagate_quant_params(self) -> None:
