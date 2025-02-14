@@ -21,6 +21,7 @@ class TINPUQuantizedReplacementUtils():
             self.from_placeholder(start_node, end_node)
 
         self._propagate_quant_params()
+        self.rename_nodes()
         self.from_first_layer()
 
     def _get_nodes(self) -> List[Node]:
@@ -62,6 +63,25 @@ class TINPUQuantizedReplacementUtils():
             if user.op == 'call_module':
                 return True
         return False
+    
+    def rename_nodes(self):
+        nodes = self._get_nodes()
+        named_modules = self._get_named_modules()
+        count = 0
+        for node in nodes:
+            if node.op == 'call_module':
+                new_node_name = ''
+                node_module = named_modules[node.target]
+                if hasattr(node_module, '__iter__'):
+                    for module in node_module:
+                        new_node_name += module.__class__.__name__ + '_'
+                else:
+                    new_node_name = node_module.__class__.__name__
+                node.name = new_node_name.lower() + str(count)
+                count += 1
+        print(self._get_nodes())
+
+        return None
     
     def _propagate_quant_params(self) -> None:
         for node in self.module.graph.nodes:
@@ -423,4 +443,6 @@ class TINPUQuantizedReplacementUtils():
         return None
 
     def from_max_pool2d(self, start: Node, end: Node):
+        pool_module = self._get_named_modules()[start.target]
+        replace_call_module(self.module, start, end, pool_module, self._get_module_num())
         return None

@@ -157,6 +157,17 @@ def lint_and_recompile(main_module: GraphModule) -> None:
     main_module.recompile()
     return None
 
+def get_name_from_module(node_module: torch.nn.Module, module_no: int) -> str:
+    new_node_name = ''
+    if hasattr(node_module, '__iter__'):
+        for module in node_module:
+            new_node_name += str(module.__class__.__name__) + '_'
+    else:
+        new_node_name += str(node_module.__class__.__name__) + '_'
+    new_node_name += str(module_no)
+    new_node_name = new_node_name.lower().replace('tinpuoffsetscaleshift', 'oss')
+    return new_node_name
+
 def remove_hanging_nodes(main_module: GraphModule) -> None:
     ''' Remove the hanging nodes from the main_module recursively '''
     while True:
@@ -228,14 +239,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
             return
 
     # Get the name of replaced module
-    new_node_name = ''
-    if hasattr(replace_module, '__iter__'):
-        for module in replace_module:
-            new_node_name += str(module.__class__.__name__.lower()) + '_'
-    else:
-        new_node_name += str(replace_module.__class__.__name__.lower()) + '_'
-    new_node_name += str(module_no)
-    new_node_name = new_node_name.replace('tinpuoffsetscaleshift', 'oss')
+    new_node_name = get_name_from_module(replace_module, module_no)
     # Add the child module in main_module
     main_module.add_module(new_node_name, replace_module)
 
@@ -268,14 +272,10 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     parent_module = main_modules[parent_name]
     # Set the attribute of parent module with the replacement module
     parent_module.__setattr__(attr_name, replace_module)
-    new_node_name = ''
-    if hasattr(replace_module, '__iter__'):
-        for module in replace_module:
-            new_node_name += str(module.__class__.__name__.lower()) + '_'
-    else:
-        new_node_name += str(replace_module.__class__.__name__.lower()) + '_'
-    new_node_name = new_node_name.replace('tinpuoffsetscaleshift', 'oss')
-    start.name = new_node_name + str(module_no)
+    
+    new_node_name = get_name_from_module(replace_module, module_no)
+    start.name = new_node_name
+
     # If there are more nodes between start and end, remove them all
     if start != end:
         # Initialize pointers for iteration
