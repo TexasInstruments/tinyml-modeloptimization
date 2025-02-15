@@ -1,6 +1,5 @@
 # torch imports
 import torch
-from edgeai_torchmodelopt import QuantizationVersion
 from torch.ao.quantization import quantize_fx
 import torch.utils
 import torch.nn as nn
