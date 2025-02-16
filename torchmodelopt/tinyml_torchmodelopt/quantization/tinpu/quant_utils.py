@@ -21,6 +21,7 @@ class TINPUQuantizedReplacementUtils():
             self.from_placeholder(start_node, end_node)
 
         self._propagate_quant_params()
+        self.rename_nodes()
         self.from_first_layer()
 
     def _get_nodes(self) -> List[Node]:
@@ -62,6 +63,23 @@ class TINPUQuantizedReplacementUtils():
             if user.op == 'call_module':
                 return True
         return False
+    
+    def rename_nodes(self):
+        nodes = self._get_nodes()
+        named_modules = self._get_named_modules()
+        count = 0
+        for node in nodes:
+            if node.op == 'call_module':
+                new_node_name = ''
+                node_module = named_modules[node.target]
+                if hasattr(node_module, '__iter__'):
+                    for module in node_module:
+                        new_node_name += module.__class__.__name__ + '_'
+                else:
+                    new_node_name = node_module.__class__.__name__
+                node.name = new_node_name.lower() + str(count)
+                count += 1
+        return None
     
     def _propagate_quant_params(self) -> None:
         for node in self.module.graph.nodes:
@@ -128,16 +146,27 @@ class TINPUQuantizedReplacementUtils():
     def get_q_params(self, node: Node, using: str='prev') -> Tuple[float]:
         scale, zero_point = 1.0, 0.0
         if using == 'prev':
-            prev_node: Node = self.graph_quant_params[node.name]['prev'][0]
-            scale = self.graph_quant_params[prev_node.name]['scale']
-            zero_point = self.graph_quant_params[prev_node.name]['zero_point']
+            node_name = node.target.replace('.', '_')
+            prev_node: Node = self.graph_quant_params[node_name]['prev'][0]
+            if isinstance(prev_node.target, str):
+                prev_node_name = prev_node.target.replace('.', '_')
+            else:
+                prev_node_name = prev_node.name
+            scale = self.graph_quant_params[prev_node_name]['scale']
+            zero_point = self.graph_quant_params[prev_node_name]['zero_point']
         if using == 'this':
-            scale = self.graph_quant_params[node.name]['scale']
-            zero_point = self.graph_quant_params[node.name]['zero_point']
+            node_name = node.target.replace('.', '_')
+            scale = self.graph_quant_params[node_name]['scale']
+            zero_point = self.graph_quant_params[node_name]['zero_point']
         if using == 'next':
-            next_node: Node = self.graph_quant_params[node.name]['next'][0]
-            scale = self.graph_quant_params[next_node.name]['scale']
-            zero_point = self.graph_quant_params[next_node.name]['zero_point']
+            node_name = node.target.replace('.', '_')
+            next_node: Node = self.graph_quant_params[node_name]['next'][0]
+            if isinstance(next_node.target, str):
+                next_node_name = next_node.target.replace('.', '_')
+            else:
+                next_node_name = next_node.name
+            scale = self.graph_quant_params[next_node_name]['scale']
+            zero_point = self.graph_quant_params[next_node_name]['zero_point']
         return (scale, zero_point)
     
     def update_module(self, module: GraphModule) -> GraphModule:
@@ -152,7 +181,7 @@ class TINPUQuantizedReplacementUtils():
     # Special Replacement rule for quantization after module at start
     def from_placeholder(self, start: Node, end: Node) -> None:
         main_node, quant_node = start, end
-        replace_node_with_node(self.module, main_node, quant_node)
+        add_node_after_node(self.module, main_node, quant_node)
         return None
 
     # for the initial layers handling quantize_per_tensor
@@ -404,6 +433,7 @@ class TINPUQuantizedReplacementUtils():
         total_kernel_area = pool_module.output_size[0] * pool_module.output_size[1]
         if total_kernel_area != 1:
             #  If output size isn't (1, 1), we will use the generic implementation
+            replace_call_module(self.module, start, end, pool_module, self._get_module_num())
             return None
         pool_module = AdaptiveAvgPool2d(activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
@@ -411,4 +441,6 @@ class TINPUQuantizedReplacementUtils():
         return None
 
     def from_max_pool2d(self, start: Node, end: Node):
+        pool_module = self._get_named_modules()[start.target]
+        replace_call_module(self.module, start, end, pool_module, self._get_module_num())
         return None
