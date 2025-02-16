@@ -23,6 +23,8 @@ from typing import Tuple, List
 from sklearn.metrics import confusion_matrix
 import torch.ao.ns._numeric_suite_fx as ns
 from torch.fx import symbolic_trace
+from torch.ao.quantization.observer import FixedQParamsObserver
+import torch.ao.quantization as quantization
 
 
 import torch
@@ -97,7 +99,7 @@ def train_model(model, train_loader, total_epochs, learning_rate, device="cpu"):
     Train the model for multiple epochs and display accuracy.
     """
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(params=model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    optimizer = optim.SGD(params=model.parameters(), lr=learning_rate, weight_decay=1e-2)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=kws_util.lr_schedule(learning_rate))
 
     for epoch in range(total_epochs):
@@ -264,6 +266,38 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     else:
         raise RuntimeError("unsupported quantization parameters")
     #
+    
+#     # ✅ Step 1: Collect all layers that need BatchNorm
+#     missing_bn_layers = []
+#     for name, module in nn_model.named_modules():
+#      if isinstance(module, nn.Conv2d) and not hasattr(module, "bn"):
+#         print(f"Adding BatchNorm2d to {name}")
+#         missing_bn_layers.append((name, module.out_channels))
+
+# # ✅ Step 2: Apply the changes after iteration
+#     for name, out_channels in missing_bn_layers:
+#      setattr(nn_model, name + "_bn", nn.BatchNorm2d(out_channels))
+
+#     for name, module in nn_model.named_modules():
+#      if "weight_fake_quant" in name and getattr(module, "qconfig", None) is None:
+#         setattr(module, "qconfig", quantization.get_default_qconfig("fbgemm"))
+#      fixed_qparams_qconfig = quantization.QConfig(
+#     activation=FixedQParamsObserver.with_args(scale=1.0 / 255, zero_point=0, dtype=torch.quint8),
+#     weight=torch.ao.quantization.default_per_channel_weight_observer
+#     )
+    
+# # Apply `FixedQParamsObserver` only to ReLU, Softmax, and AvgPool layers
+#    qconfig_mapping =quantization.QConfigMapping()
+#     for name, module in nn_model.named_modules():
+#      print("modifying")
+#      if "activation_" in name or "dense_softmax" in name or "average_pooling2d" in name:
+#         qconfig_mapping.set_module_name(name, fixed_qparams_qconfig)
+
+#     for name, module in nn_model.named_modules():
+#      if "activation_post_process" in name and getattr(module, "qconfig", None) is None:
+#         print(f"Applying FixedQParamsObserver to {name}")
+#         qconfig_mapping.set_module_name(name, fixed_qparams_qconfig)
+   
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
             quant_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
@@ -283,6 +317,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     else:
         raise RuntimeError(f"Unknown Quantization device type: {quantization_device_type}")
 
+    
     return quant_model
 
 def calibrate_model(model: nn.Module, dataloader: DataLoader, total_epochs: int) -> nn.Module:
@@ -331,7 +366,7 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
          quant_model = quantize_fx.convert_fx(quant_model.module)
     #  Print layer-wise quantization parameters with range
   #  print_layerwise_quant_params(quant_model)
-    print(quant_model)
+   # print(quant_model)
    
     #  Save quantized model
     q_model_path = "final_quantized_model.pth"
@@ -424,6 +459,8 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     accuracy = round(correct_predictions/total_predictions, 5)
     return accuracy
 
+
+
 def load_calibration_indices(file_path):
     """Load indices from a calibration indices file."""
     with open(file_path, "r") as f:
@@ -441,7 +478,7 @@ if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0,1,2,3,4,5,6,7,8,9,10,11]
-    NUM_EPOCHS = 25 #10 acc was 92.2
+    NUM_EPOCHS = 36 #10 acc was 92.2
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
     LEARNING_RATE = 0.00001
@@ -456,10 +493,10 @@ if __name__ == '__main__':
 
     
     Flags, unparsed = kws_util.parse_command()
-    train_loader = SavedTensorDataset(dataset_dir=r"C:\Users\A0507182\torch_kws_flow\__mlperf_vcdataset\__mlperf_vcdataset\train")
+#    train_loader = SavedTensorDataset(dataset_dir=r"C:\Users\A0507182\torch_kws_flow\__mlperf_vcdataset\__mlperf_vcdataset\train")
     test_loader = SavedTensorDataset(dataset_dir=r"C:\Users\A0507182\torch_kws_flow\__mlperf_vcdataset\__mlperf_vcdataset\test")
-    test_loader = DataLoader(test_loader, batch_size=100, shuffle=False)
-    train_loader = DataLoader(train_loader, batch_size=100, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_loader, batch_size=1, shuffle=False)
+ #   train_loader = DataLoader(train_loader, batch_size=100, shuffle=True, num_workers=0)
     
     calibration_indices_file = r"quant_cal_idxs.txt"  # Path to calibration indices
 
@@ -477,13 +514,17 @@ if __name__ == '__main__':
  
     nn_model, _ = models.get_model(args=Flags)
   
-    nn_model = nn_model.to("cpu")
+    #nn_model = nn_model.to("cpu")
   
-    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    #nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    #accuracy = validate_model(nn_model, test_loader, 12, CATEGORIES_NAME)
+    #print("OG model accuracy is", accuracy)
+    path = r"C:\Users\A0507182\Documents\tinyml-modeloptimization\torchmodelopt\examples\Keyword_Spotting\trained_models\kws_torch.pth"
+    checkpoint = torch.load(path , map_location="cpu")
+    nn_model.load_state_dict(checkpoint)
+    #nn_model=torch.load(path)
     accuracy = validate_model(nn_model, test_loader, 12, CATEGORIES_NAME)
     print("OG model accuracy is", accuracy)
-  #  path = r"C:\Users\A0507182\tf2onnx_onnx2pytorch_kwsmodel_onnx2torch.pth"
-  #  nn_model=torch.load(path)
     # ✅ Print final model structure to file
     file_path = "orignal_nn_model_print.txt"
     with open(file_path, "w") as f:
@@ -498,7 +539,8 @@ if __name__ == '__main__':
         MODEL_NAME = 'quant_' + MODEL_NAME
         quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,quantization_device_type=QUANTIZATION_DEVICE_TYPE)
-        print(quant_model)
+        for name, module in quant_model.named_modules():
+         print(f"Layer: {name}, Type: {type(module)}, QConfig: {getattr(module, 'qconfig', None)}")
         if QUANTIZATION_METHOD == 'QAT':
             quant_learning_rate = (LEARNING_RATE/100) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
          
@@ -520,5 +562,19 @@ if __name__ == '__main__':
     
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
+    path_converted_model=r"C:\Users\A0507182\Documents\tinyml-modeloptimization\torchmodelopt\examples\Keyword_Spotting\final_quantized_model.pth"
+    
+    nn_model2, _ = models.get_model(args=Flags)
+  
+    #nn_model = nn_model.to("cpu")
+  
+    #nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    #accuracy = validate_model(nn_model, test_loader, 12, CATEGORIES_NAME)
+    #print("OG model accuracy is", accuracy)
+  #  path = r"C:\Users\A0507182\Documents\tinyml-modeloptimization\torchmodelopt\examples\Keyword_Spotting\trained_models\kws_torch.pth"
+  #  checkpoint2 = torch.load(path_converted_model , map_location="cpu")
+  #  nn_model2.load_state_dict(checkpoint2)
+   # accuracy = validate_model(nn_model2, test_loader, 12, CATEGORIES_NAME)
+   # print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
     
 
