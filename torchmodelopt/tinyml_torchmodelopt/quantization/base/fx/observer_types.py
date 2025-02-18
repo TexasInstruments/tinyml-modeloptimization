@@ -124,12 +124,25 @@ class SimpleActivationObserver(torch.ao.quantization.MovingAverageMinMaxObserver
     def _calculate_qparams(self, min_val, max_val):
         r"""Calculates the quantization parameters."""
         if self.symmetric:
-            signed_range = torch.min(min_val.detach()).item() < 0.0
+            unsigned_range = torch.min(min_val.detach()).item() >= 0.0
             max_abs = torch.max(torch.abs(min_val), torch.abs(max_val))
-            min_val = -max_abs if signed_range else max_abs * 0.0
+            min_val = (max_abs * 0.0) if unsigned_range else (-max_abs)
             max_val = max_abs
-
-        scale, zero_point = super()._calculate_qparams(min_val, max_val)
+            if unsigned_range:
+                # in unsigned case, we can use a better scale than what pytorch uses (use the full range)
+                # backup qscheme and set it to torch.per_tensor_affine,
+                # so that the whole unsigned range will be used for scale computation
+                # this is a hack to reuse super()._calculate_qparams() for this case
+                qscheme_backup = self.qscheme
+                self.qscheme = torch.per_tensor_affine
+            #
+            scale, zero_point = super()._calculate_qparams(min_val, max_val)
+            if unsigned_range:
+                # restore qscheme
+                self.qscheme = qscheme_backup
+            #
+        else:
+            scale, zero_point = super()._calculate_qparams(min_val, max_val)
 
         if self.power2_scale:
             scale, zero_point = _adjust_qparams_power2_scale(
