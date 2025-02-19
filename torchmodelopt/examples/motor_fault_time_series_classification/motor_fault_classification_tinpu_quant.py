@@ -257,14 +257,14 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': True,
+                'power2_scale': False,
                 'range_max': None,
                 'fixed_range': False
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': True,
+                'power2_scale': False,
                 'range_max': None,
                 'fixed_range': False
             }
@@ -274,7 +274,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': True,
+                'power2_scale': False,
                 'range_max': None,
                 'fixed_range': False,
                 'quant_min': -1,
@@ -283,7 +283,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': True,
+                'power2_scale': False,
                 'range_max': None,
                 'fixed_range': False
             }
