@@ -80,7 +80,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             assert self.power2_scale is True, 'for 8bit quantization, power2_scale must be set to True'
         else:
             if self.power2_scale:
-                warnings.warn('for bitwidths < 8, it power2_scale=False is supported and can be used for better accuracy.')
+                warnings.warn('for bit_widths < 8, it power2_scale=False is supported and can be used for better accuracy.')
             #
         #
 
