@@ -380,7 +380,7 @@ def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qu
         else:
             nn_model = quantize_fx.convert_fx(nn_model.module)
 
-    if hasattr(nn_model, "export"):
+    if with_quant and hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
         nn_model.export(example_input.to(DEVICE), model_name, input_names=['input'])
     else:
@@ -505,7 +505,7 @@ if __name__ == '__main__':
 
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs,
                 weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,
                 quantization_device_type=QUANTIZATION_DEVICE_TYPE)
