@@ -257,14 +257,14 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
+                'power2_scale': True,
                 'range_max': None,
                 'fixed_range': False
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
+                'power2_scale': True,
                 'range_max': None,
                 'fixed_range': False
             }
@@ -274,7 +274,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
+                'power2_scale': True,
                 'range_max': None,
                 'fixed_range': False,
                 'quant_min': -1,
@@ -283,7 +283,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
+                'power2_scale': True,
                 'range_max': None,
                 'fixed_range': False
             }
@@ -380,7 +380,7 @@ def export_model(nn_model, example_input: torch.Tensor, model_name: str, with_qu
         else:
             nn_model = quantize_fx.convert_fx(nn_model.module)
 
-    if hasattr(nn_model, "export"):
+    if with_quant and hasattr(nn_model, "export"):
         # Export int8 quantized model to onnx.
         nn_model.export(example_input.to(DEVICE), model_name, input_names=['input'])
     else:

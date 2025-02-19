@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 from .quant_modules import *
 
 class TINPUQuantizedReplacementUtils():
-    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int):
+    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool):
 
         self.module: GraphModule = model
         self.graph_quant_params: Dict[str, Dict] = dict()
@@ -13,7 +13,8 @@ class TINPUQuantizedReplacementUtils():
 
         self.weight_bw = weight_bw
         self.activation_bw = activation_bw
-        self.num_bits_scale = 8 if weight_bw <= 4 else 1
+        self.power2_scale = power2_scale
+        self.num_bits_scale = 8 if weight_bw <= 4 or not self.power2_scale else 1
 
         if self._check_module_before_quant():
             nodes = self._get_nodes()

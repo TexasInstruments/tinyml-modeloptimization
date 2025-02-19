@@ -73,6 +73,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         '''
         self.weight_bw = qconfig_type['weight']['bitwidth'] if qconfig_type else 8
         self.activation_bw = qconfig_type['activation']['bitwidth'] if qconfig_type else 8
+        self.power2_scale = qconfig_type['weight']['power2_scale'] if qconfig_type else True
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 
@@ -151,7 +152,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         # Convert the module using symbolic trace
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
         # Get the replacement rules to change the pattern
-        replacement_utils = TINPUQuantizedReplacementUtils(module, self.weight_bw, self.activation_bw)
+        replacement_utils = TINPUQuantizedReplacementUtils(module, self.weight_bw, self.activation_bw, self.power2_scale)
         replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_dequantize)
         # Replace the patterns using the replacement function
         for replacement_pattern, replacement_function in replacement_rules:
