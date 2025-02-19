@@ -13,8 +13,7 @@ class TINPUQuantizedReplacementUtils():
 
         self.weight_bw = weight_bw
         self.activation_bw = activation_bw
-        self.power2_scale = power2_scale
-        self.num_bits_scale = 8 if weight_bw <= 4 or not self.power2_scale else 1
+        self.num_bits_scale = 1 if power2_scale else 8
 
         if self._check_module_before_quant():
             nodes = self._get_nodes()

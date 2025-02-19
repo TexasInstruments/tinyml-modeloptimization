@@ -29,6 +29,7 @@
 #
 #################################################################################
 
+import warnings
 import torch
 import torch.ao.quantization
 from torch.fx import GraphModule
@@ -74,6 +75,15 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.weight_bw = qconfig_type['weight']['bitwidth'] if qconfig_type else 8
         self.activation_bw = qconfig_type['activation']['bitwidth'] if qconfig_type else 8
         self.power2_scale = qconfig_type['weight']['power2_scale'] if qconfig_type else True
+
+        if self.weight_bw >= 8:
+            assert self.power2_scale is True, 'for 8bit quantization, power2_scale must be set to True'
+        else:
+            if self.power2_scale:
+                warnings.warn('for bitwidths < 8, it power2_scale=False is supported and can be used for better accuracy.')
+            #
+        #
+
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
 
