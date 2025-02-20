@@ -1,5 +1,5 @@
 # torch imports
-from edgeai_torchmodelopt import QuantizationVersion
+import torch
 from torch.ao.quantization import quantize_fx
 import torch.utils
 import torch.nn as nn
@@ -7,8 +7,13 @@ import torch.utils.data
 from torch.utils.data import Dataset, DataLoader, random_split
 import torchinfo
 import os
+import shutil
+import re
+import torchaudio
+from scipy.io import wavfile
+from pydub import AudioSegment
 
-from get_dataset_torch import SavedTensorDataset
+
 import torch_model as models
 # ti, onnx imports
 from tinyml_torchmodelopt.quantization import \
@@ -29,8 +34,8 @@ import torch.ao.quantization as quantization
 
 import torch
 import torch.nn.functional as F
-import get_dataset_torch as kws_data
-import kws_util
+
+
 from torchinfo import summary
 from torchmetrics.classification import Accuracy
 from tqdm import tqdm
@@ -40,6 +45,550 @@ import torch.optim as optim
 
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+def process_audio_file(file_path, label, output_dir, SAMPLE_RATE=16000):
+    """
+    Process a .wav audio file by splitting it into 1-second segments and saving them as .wav files.
+    
+    Args:
+    - file_path: Path to the input .wav audio file
+    - example_id: Base identifier for the audio segments
+    - label: Label to associate with the audio segments
+    - output_dir: Directory to save the generated .wav files
+    - SAMPLE_RATE: Sampling rate of the audio (default 16000 Hz)
+    
+    Yields:
+    - Tuple of (segment_id, segment_metadata)
+    """
+    relpath, wavname = os.path.split(file_path)
+    _, word = os.path.split(relpath)
+    example_id = '{}_{}'.format(word, wavname)
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Load audio file
+    audio = AudioSegment.from_wav(file_path)
+    
+    # Convert to numpy array of samples
+    audio_samples = np.array(audio.get_array_of_samples())
+    cc = 0
+    # Split audio into 1-second segments with 50% overlap
+    for start in range(0, len(audio_samples) - SAMPLE_RATE, SAMPLE_RATE // 2):
+        # Extract audio segment
+        audio_segment = audio_samples[start : start + SAMPLE_RATE]
+        
+        # Create unique identifier for the segment
+        cur_id = f'{example_id}_{start}'
+        
+        # Prepare segment metadata
+        example = {
+            'audio': audio_segment, 
+            'label': label
+        }
+        
+        # Generate full path for the output .wav file
+        output_path = os.path.join(output_dir, f'{cur_id}.wav')
+        
+        # Save the audio segment as a .wav file
+        wavfile.write(output_path, SAMPLE_RATE, audio_segment.astype(np.int16))
+        
+        # Yield the segment ID and metadata
+        cc += 1
+    return cc
+
+MAX_NUM_WAVS_PER_CLASS = 2**27 - 1  # ~134M
+
+def which_set(filename, validation_percentage, testing_percentage):
+    """Determines which data partition the file should belong to.
+
+    We want to keep files in the same training, validation, or testing sets even
+    if new ones are added over time. This makes it less likely that testing
+    samples will accidentally be reused in training when long runs are restarted
+    for example. To keep this stability, a hash of the filename is taken and used
+    to determine which set it should belong to. This determination only depends on
+    the name and the set proportions, so it won't change as other files are added.
+
+    It's also useful to associate particular files as related (for example words
+    spoken by the same person), so anything after '_nohash_' in a filename is
+    ignored for set determination. This ensures that 'bobby_nohash_0.wav' and
+    'bobby_nohash_1.wav' are always in the same set, for example.
+
+    Args:
+    filename: File path of the data sample.
+    validation_percentage: How much of the data set to use for validation.
+    testing_percentage: How much of the data set to use for testing.
+
+    Returns:
+    String, one of 'training', 'validation', or 'testing'.
+    """
+    base_name = os.path.basename(filename)
+    # We want to ignore anything after '_nohash_' in the file name when
+    # deciding which set to put a wav in, so the data set creator has a way of
+    # grouping wavs that are close variations of each other.
+    hash_name = re.sub(r'_nohash_.*$', '', base_name)
+    # This looks a bit magical, but we need to decide whether this file should
+    # go into the training, testing, or validation sets, and we want to keep
+    # existing files in the same set even if more files are subsequently
+    # added.
+    # To do that, we need a stable way of deciding based on just the file name
+    # itself, so we do a hash of that and then use that to generate a
+    # probability value that we use to assign it.
+    hash_name_hashed = hashlib.sha1(hash_name.encode('utf-8')).hexdigest()
+    percentage_hash = ((int(hash_name_hashed, 16) %
+                        (MAX_NUM_WAVS_PER_CLASS + 1)) *
+                        (100.0 / MAX_NUM_WAVS_PER_CLASS))
+    if percentage_hash < validation_percentage:
+        result = 'validation'
+    elif percentage_hash < (testing_percentage + validation_percentage):
+        result = 'testing'
+    else:
+        result = 'training'
+    return result
+
+
+# Fetch Background noise data
+def prepare_background_data(bg_path, BACKGROUND_NOISE_DIR_NAME):
+    """Searches a folder for background noise audio, and loads it into memory.
+    It's expected that the background audio samples will be in a subdirectory
+    named '_background_noise_' inside the 'data_dir' folder, as .wavs that match
+    the sample rate of the training data, but can be much longer in duration.
+    If the '_background_noise_' folder doesn't exist at all, this isn't an
+    error, it's just taken to mean that no background noise augmentation should
+    be used. If the folder does exist, but it's empty, that's treated as an
+    error.
+    Returns:
+    List of raw PCM-encoded audio samples of background noise.
+    Raises:
+    Exception: If files aren't found in the folder.
+    """
+    background_data = []
+    background_dir = os.path.join(bg_path, BACKGROUND_NOISE_DIR_NAME)
+    if not os.path.exists(background_dir):
+        return background_data
+    for wav in os.listdir(background_dir):
+        wav_path = os.path.join(background_dir, wav)
+        if not wav_path.endswith((".wav", ".WAV")):
+            continue
+        audio, _ = torchaudio.load(wav_path)
+        background_data.append(audio.squeeze())
+    if not background_data:
+        raise Exception('No background wav files were found in ' + background_dir)
+    return background_data
+
+# Audio Preprocessor
+class AudioPreprocessor(object):
+    def __init__(self, flag_trainer: bool, flag_background_noise: bool=False, background_data: list = [], audio_features: str='tfMFCC', sample_rate: int = 16000, audio_duration: int = 1000, n_mfcc: int=10):
+        self.flag_trainer = flag_trainer
+        self.flag_background_noise = flag_background_noise
+        if audio_features in ["torchMFCC", "tfMFCC", "td_samples"]:
+            self.audio_features = audio_features
+        else:
+            raise NotImplementedError(f"Audio Features of Type : {audio_features} are Not Supported")
+        self.background_data = background_data
+        self.sr = sample_rate
+        self.audio_duration = audio_duration
+        self.n_mfcc = n_mfcc
+        self.n_audio = int(self.sr * self.audio_duration / 1000)
+    
+    def __call__(self, audio_tensor):
+        audio_tensor = torch.squeeze(audio_tensor)
+        audio_tensor = audio_tensor.to(torch.float32)
+        # Normalize
+        if self.audio_features in ["tfMFCC", "torchMFCC"]:
+            audio_tensor = audio_tensor / torch.max(audio_tensor).item()
+        else:
+            audio_tensor = audio_tensor / 2 ** 15
+        # Pad
+        audio_tensor = F.pad(audio_tensor, (0, self.n_audio - audio_tensor.shape[-1]))
+
+        # bg Noise augmentation
+        if self.flag_trainer and self.flag_background_noise:
+            audio_tensor = self.add_bgNoise(audio_tensor)
+        
+        # Feature Extraction
+        if self.audio_features == "torchMFCC":
+            audio_tensor = self.compute_torchMFCC(audio_tensor)
+        elif self.audio_features == "tfMFCC":
+            audio_tensor = self.compute_tfMFCC(audio_tensor)
+        else:
+            audio_tensor = audio_tensor.unsqueeze(dim=0).unsqueeze(dim=0)
+        
+        return audio_tensor
+    
+    def compute_tfMFCC(self, audio_tensor):
+        # Convert to TF Tensor
+        spectrogram_length = 1 + int ((self.n_audio - int(self.sr * 30 / 1000)) / int(self.sr * 20 / 1000))
+        audio_tensor_tf = tf.convert_to_tensor(audio_tensor.numpy(), dtype=tf.float32)
+        stfts = tf.signal.stft(audio_tensor_tf, frame_length=int(self.sr * 30 / 1000), 
+                    frame_step=int(self.sr * 20 / 1000), fft_length=None,
+                    window_fn=tf.signal.hann_window
+                    )
+        spectrograms = tf.abs(stfts)
+        num_spectrogram_bins = stfts.shape[-1]
+        # default values used by contrib_audio.mfcc as shown here
+        # https://kite.com/python/docs/tensorflow.contrib.slim.rev_block_lib.contrib_framework_ops.audio_ops.mfcc
+        lower_edge_hertz, upper_edge_hertz, num_mel_bins = 20.0, 4000.0, 40
+
+        linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix( num_mel_bins, num_spectrogram_bins,
+                                                                            self.sr,
+                                                                            lower_edge_hertz, upper_edge_hertz)
+        mel_spectrograms = tf.tensordot(spectrograms, linear_to_mel_weight_matrix, 1)
+        mel_spectrograms.set_shape(spectrograms.shape[:-1].concatenate(linear_to_mel_weight_matrix.shape[-1:]))
+        # Compute a stabilized log to get log-magnitude mel-scale spectrograms.
+        log_mel_spectrograms = tf.math.log(mel_spectrograms + 1e-6)
+        # Compute MFCCs from log_mel_spectrograms and take the first 13.
+        mfccs_tf = tf.signal.mfccs_from_log_mel_spectrograms(log_mel_spectrograms)[..., :self.n_mfcc]
+        mfccs_tf = tf.reshape(mfccs_tf, [1, spectrogram_length, self.n_mfcc])
+        mfccs = torch.tensor(mfccs_tf.numpy(), dtype=torch.float32)
+        return mfccs
+    
+    def compute_torchMFCC(self, audio_tensor):
+        __MFCC = T.MFCC(
+            sample_rate=self.sr,
+            n_mfcc=self.n_mfcc,
+            melkwargs={
+                "n_fft": int(self.sr * 40 / 1000),
+                "hop_length": int(self.sr * 20 / 1000),
+                "n_mels": 128,
+                "mel_scale": "htk",
+                "center": False 
+            }
+        )
+        mfccs = __MFCC(audio_tensor).T.unsqueeze(dim=0)
+        return mfccs
+    
+    def add_bgNoise(self, audio_tensor):
+        background_index = np.random.randint(len(self.background_data))
+        background_samples = self.background_data[background_index]
+        background_offset = np.random.randint(0, len(background_samples) - self.n_audio)
+        background_clipped = background_samples[background_offset : (background_offset + self.n_audio)]
+        background_clipped = torch.squeeze(background_clipped)
+        background_reshaped = F.pad(background_clipped, (0, self.n_audio - audio_tensor.shape[-1]))
+        background_reshaped = background_reshaped.to(torch.float32)
+        if np.random.uniform(0, 1) < 0.8:
+            background_volume = np.random.uniform(0, 0.1)
+        else:
+            background_volume = 0
+        background_mul = background_reshaped * background_volume
+        background_add = background_mul + audio_tensor
+        noisy_audio_tensor = torch.clamp(background_add, -1.0, 1.0)
+        return noisy_audio_tensor
+    
+        
+
+                    
+class GoogleSpeechDatasetGenerator(object):
+    def __init__(self, dataset_dir: str, save_dir: str, flag_trainer: bool, flag_background_noise: bool=False, background_data: list = [], audio_features: str="tfMFCC"):
+        super().__init__()
+        self.num_classes = 12
+        self.labels = ['down', 'go', 'left', 'no', 'off', 'on', 'right', 'stop', 'up', 'yes', '_silence_', '_unknown_']
+        self.dataset_dir = dataset_dir
+        self.sample_count = sum(len(samples) for _, _, samples in os.walk(dataset_dir))
+        self.audio_preprocessor = AudioPreprocessor(flag_trainer=flag_trainer, flag_background_noise=flag_background_noise, background_data=background_data, audio_features=audio_features)
+        self.save_dir = save_dir
+        if os.path.exists(save_dir):
+            raise IsADirectoryError("Error! This directory shouldn't exist; Flaw in code pipeline")
+        else:
+            os.makedirs(self.save_dir)
+
+
+    def __call__(self):
+        with tqdm(total=self.sample_count, unit='samples', desc="Saving Tensors...") as pbar:
+            for label in os.listdir(self.dataset_dir):
+                if label not in self.labels:
+                    continue
+                label_dir = os.path.join(self.dataset_dir, label)
+                if os.path.isdir(label_dir):
+                    for audio_file in os.listdir(label_dir):
+                        if audio_file.endswith(('.wav', '.WAV')):
+                            raw_audio_wave, _ = torchaudio.load(os.path.join(label_dir, audio_file))
+                            audio_wave = self.audio_preprocessor(raw_audio_wave)
+                            save_label_dir = os.path.join(self.save_dir, label)
+                            if not os.path.isdir(save_label_dir):
+                                os.mkdir(save_label_dir)
+                            torch.save(audio_wave, os.path.join(save_label_dir, f"{audio_file}_tensor.pt"))
+                            pbar.update(1)
+        pass
+
+def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
+    # Set seeds
+    torch.manual_seed(seed)
+    np.random.seed(seed)  
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+    # Download Dataset
+    if os.path.exists(rf"{root}\SpeechCommands") and not force:
+        print("Dataset already downloaded.")
+        return
+    elif os.path.exists(rf"{root}\SpeechCommands") and force:
+        shutil.rmtree(rf"{root}\SpeechCommands")
+    print("Downloading dataset......")
+    full_dataset = torchaudio.datasets.SPEECHCOMMANDS(
+        root=root,      # Specify your download directory
+        download=True   # This will download the entire dataset
+    )
+    
+    # Separate into train/test/val
+    print("Rearranging/Filtering dataset......")
+    raw_dataset_path = rf"{root}\SpeechCommands\speech_commands_v0.02"
+    filtered_dataset_path = rf"{root}\SpeechCommands\google_vcdataset"
+    if not os.path.isdir: 
+        os.mkdir(filtered_dataset_path)
+    train_dir = os.path.join(filtered_dataset_path, "train")
+    test_dir = os.path.join(filtered_dataset_path, "test")
+    val_dir = os.path.join(filtered_dataset_path, "val")
+    if os.path.isdir(train_dir):
+        shutil.rmtree(train_dir)
+    os.makedirs(train_dir)
+    if os.path.isdir(test_dir):
+        shutil.rmtree(test_dir)
+    os.makedirs(test_dir)
+    if os.path.isdir(val_dir):
+        shutil.rmtree(val_dir)
+    os.makedirs(val_dir)
+    os.makedirs(os.path.join(train_dir, "_unknown_"))
+    os.makedirs(os.path.join(test_dir, "_unknown_"))
+    os.makedirs(os.path.join(val_dir, "_unknown_"))
+    os.makedirs(os.path.join(train_dir, "_silence_"))
+    os.makedirs(os.path.join(test_dir, "_silence_"))
+    os.makedirs(os.path.join(val_dir, "_silence_"))
+    train_samples, test_samples, val_samples = 0, 0, 0
+    train_samples_, test_samples_, val_samples_ = 0, 0, 0
+    val_per, test_per = 10, 10
+    word_labels = ["down", "go", "left", "no", "off", "on", "right",
+               "stop", "up", "yes", "silence", "unknown"]
+    for label in os.listdir(raw_dataset_path):
+        if label == "_background_noise_":
+            continue
+        label_dir = os.path.join(raw_dataset_path, label)
+        if os.path.isdir(label_dir):
+            if label not in word_labels:
+                for filename in os.listdir(label_dir):
+                    filepath = os.path.join(label_dir, filename)
+                    res_set = which_set(filename, val_per, test_per)
+                    if res_set == "training":
+                        shutil.copy(filepath, os.path.join(train_dir, "_unknown_", f"{label}_{filename}"))
+                        train_samples += 1
+                    elif res_set == "validation":
+                        shutil.copy(filepath, os.path.join(val_dir, "_unknown_", f"{label}_{filename}"))
+                        val_samples += 1
+                    else:
+                        shutil.copy(filepath, os.path.join(test_dir, "_unknown_", f"{label}_{filename}"))
+                        test_samples += 1     
+                continue            
+            os.makedirs(os.path.join(train_dir, label))
+            os.makedirs(os.path.join(test_dir, label))
+            os.makedirs(os.path.join(val_dir, label))
+            for filename in os.listdir(label_dir):
+                filepath = os.path.join(label_dir, filename)
+                res_set = which_set(filename, val_per, test_per)
+                if res_set == "training":
+                    shutil.copy(filepath, os.path.join(train_dir, label))
+                    train_samples += 1
+                elif res_set == "testing":
+                    shutil.copy(filepath, os.path.join(test_dir, label))
+                    test_samples += 1
+                else:
+                    shutil.copy(filepath, os.path.join(val_dir, label))
+                    val_samples += 1
+
+    label = "_background_noise_"
+    label_dir = os.path.join(raw_dataset_path, label)
+    for filename in os.listdir(label_dir):
+        filepath = os.path.join(label_dir, filename)
+        if filename.endswith("md"):
+            continue
+        elif filename == "running_tap.wav":
+            val_samples += process_audio_file(filepath, "silence", os.path.join(val_dir, "_silence_"))
+        elif filename == "doing_the_dishes.wav":
+            test_samples += process_audio_file(filepath, "silence", os.path.join(test_dir, "_silence_"))
+        else:
+            train_samples += process_audio_file(filepath, "silence", os.path.join(train_dir, "_silence_"))
+    print(f"Train dataset samples = {train_samples}")
+    print(f"Test dataset samples = {test_samples}")
+    print(f"Val dataset samples = {val_samples}")
+
+    # Preprocess and save as .pt tensors
+    print("Preparing Saved TensorDataset....")
+    dataset_dir = rf"{root}\SpeechCommands\google_vcdataset"
+    save_dir = rf"{root}\SpeechCommands\tensor_vcdataset"
+    os.mkdir(save_dir)
+    # Prepare bg noise data
+    background_data = prepare_background_data(rf"{root}\SpeechCommands\speech_commands_v0.02", "_background_noise_")
+    # Create dataset generator handles
+    trainset_generator = GoogleSpeechDatasetGenerator(
+        dataset_dir=os.path.join(dataset_dir, "train"),
+        save_dir=os.path.join(save_dir, "train"),
+        flag_trainer=True, flag_background_noise=True,
+        background_data=background_data, audio_features=audio_features
+    )
+    valset_generator = GoogleSpeechDatasetGenerator(
+        dataset_dir=os.path.join(dataset_dir, "val"),
+        save_dir=os.path.join(save_dir, "val"),
+        flag_trainer= False, audio_features=audio_features
+    )
+    testset_generator = GoogleSpeechDatasetGenerator(
+        dataset_dir=os.path.join(dataset_dir, "test"),
+        save_dir=os.path.join(save_dir, "test"),
+        flag_trainer=False, audio_features=audio_features
+    )
+    
+    # Populate the save_dir
+    trainset_generator()
+    valset_generator()
+    testset_generator()
+    print("Done Preparing Saved TensorDataset.")
+
+class DSCNN(nn.Module):
+    def __init__(self):
+        super(DSCNN, self).__init__()
+        self.spectrogram_length = 49
+        self.dct_coefficient_count = 10
+        self.label_count = 12
+        filters = 64
+
+        # Calculate initial padding for the first layer
+        pads = (4 + self.spectrogram_length % 2, 1 + self.dct_coefficient_count % 2)
+
+        # First Conv Layer
+        self.conv1 = nn.Conv2d(1, filters, kernel_size=(10, 4), stride=(2, 2), padding=pads)
+        self.bn1 = nn.BatchNorm2d(filters)
+        self.relu1 = nn.ReLU()
+        self.dropout1 = nn.Dropout(0.2)
+
+        # Depthwise and Pointwise Convolutions with dynamic padding
+        self.depthwise2 = nn.Conv2d(filters, filters, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=filters)
+        self.bn21 = nn.BatchNorm2d(filters)
+        self.relu21 = nn.ReLU()
+        self.pointwise2 = nn.Conv2d(filters, filters, kernel_size=(1, 1), stride=(1, 1), padding=0)
+        self.bn22 = nn.BatchNorm2d(filters)
+        self.relu22 = nn.ReLU()
+
+        self.depthwise3 = nn.Conv2d(filters, filters, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=filters)
+        self.bn31 = nn.BatchNorm2d(filters)
+        self.relu31 = nn.ReLU()
+        self.pointwise3 = nn.Conv2d(filters, filters, kernel_size=(1, 1), stride=(1, 1), padding=0)
+        self.bn32 = nn.BatchNorm2d(filters)
+        self.relu32 = nn.ReLU()
+
+        self.depthwise4 = nn.Conv2d(filters, filters, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=filters)
+        self.bn41 = nn.BatchNorm2d(filters)
+        self.relu41 = nn.ReLU()
+        self.pointwise4 = nn.Conv2d(filters, filters, kernel_size=(1, 1), stride=(1, 1), padding=0)
+        self.bn42 = nn.BatchNorm2d(filters)
+        self.relu42 = nn.ReLU()
+
+        self.depthwise5 = nn.Conv2d(filters, filters, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=filters)
+        self.bn51 = nn.BatchNorm2d(filters)
+        self.relu51 = nn.ReLU()
+        self.pointwise5 = nn.Conv2d(filters, filters, kernel_size=(1, 1), stride=(1, 1), padding=0)
+        self.bn52 = nn.BatchNorm2d(filters)
+        self.relu52 = nn.ReLU()
+
+        # Dropout
+        self.dropout2 = nn.Dropout(p=0.4)
+
+        # Final Pooling, Flattening, and Fully Connected Layers
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.flatten6 = nn.Flatten(start_dim=1)
+        self.fc6 = nn.Linear(filters, self.label_count)
+
+    def forward(self, x):
+        # Input Conv2D Layer
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu1(x)
+        x = self.dropout1(x)
+
+        # Depthwise separable convolutions
+        x = self.depthwise2(x)
+        x = self.bn21(x)
+        x = self.relu21(x)
+        x = self.pointwise2(x)
+        x = self.bn22(x)
+        x = self.relu22(x)
+
+        x = self.depthwise3(x)
+        x = self.bn31(x)
+        x = self.relu31(x)
+        x = self.pointwise3(x)
+        x = self.bn32(x)
+        x = self.relu32(x)
+
+        x = self.depthwise4(x)
+        x = self.bn41(x)
+        x = self.relu41(x)
+        x = self.pointwise4(x)
+        x = self.bn42(x)
+        x = self.relu42(x)
+
+        x = self.depthwise5(x)
+        x = self.bn51(x)
+        x = self.relu51(x)
+        x = self.pointwise5(x)
+        x = self.bn52(x)
+        x = self.relu52(x)
+
+        # Dropout
+        x = self.dropout2(x)
+
+        # Pooling and Flattening
+        x = self.avgpool(x)
+        x = self.flatten6(x)
+
+        # Fully Connected Layer
+        x = self.fc6(x)
+        return x
+    
+class SavedTensorDataset(Dataset):
+    def __init__(self, dataset_dir):
+        self.encode_labels = {
+            "down": 0,
+            "go": 1,
+            "left": 2,
+            "no": 3,
+            "off": 4,
+            "on": 5,
+            "right": 6,
+            "stop": 7,
+            "up": 8,
+            "yes": 9,
+            "_silence_": 10,
+            "_unknown_": 11,
+        }
+        self.max = 85511 if "train" in dataset_dir else 4890 if "test" in dataset_dir else 10102
+        self.tensors = []
+        self.labels = []
+        self.filenames = []
+        self.class_count=torch.zeros(12)
+        with tqdm(total=self.max, desc="loading Tensor...", unit='tensor') as pbar:
+            for label in os.listdir(dataset_dir):
+                if label not in self.encode_labels.keys():
+                    continue
+                label_dir = os.path.join(dataset_dir, label)
+                if os.path.isdir(label_dir):
+                    for tensor_file in os.listdir(label_dir):
+                        audio_tensor = torch.load(os.path.join(label_dir, tensor_file), weights_only=True)
+                        self.tensors.append(audio_tensor)
+                        self.labels.append(label)
+                        self.class_count[self.encode_labels[label]] += 1
+                        pbar.update(1)
+                        self.filenames.append(os.path.join(label_dir, tensor_file))  # Store full path to file
+        self.labels = [self.encode_labels[label] for label in self.labels]
+        
+        self.class_weights = self.class_count.sum().item() / (12 * self.class_count)
+
+    def __len__(self):
+        return len(self.labels)
+    
+    def _get_imbalance(self):
+        return self.class_weights
+    
+    def __getitem__(self, index):
+        audio_tensor = self.tensors[index]
+        label = torch.tensor(self.labels[index], dtype=torch.long)  # Convert label to tensor
+        filename = self.filenames[index]  # Include filename
+        return {"audio" : audio_tensor, "label" : label}
 
 def train(dataloader, model, loss_fn, optimizer, scheduler, device="cpu"):
     """
@@ -99,8 +648,8 @@ def train_model(model, train_loader, total_epochs, learning_rate, device="cpu"):
     Train the model for multiple epochs and display accuracy.
     """
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(params=model.parameters(), lr=learning_rate, weight_decay=1e-2)
-    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=kws_util.lr_schedule(learning_rate))
+    optimizer = optim.SGD(params=model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
 
     for epoch in range(total_epochs):
         print(f"\n🚀 Epoch {epoch + 1}/{total_epochs}")
@@ -110,7 +659,7 @@ def train_model(model, train_loader, total_epochs, learning_rate, device="cpu"):
         scheduler.step()
         last_lr = scheduler.get_last_lr()[0]
 
-        print(f"📌 Epoch {epoch+1} - LR: {last_lr:.5f} - Loss: {loss:.5f} - Accuracy: {acc:.4f}")
+        print(f"📌 Epoch {epoch+1} - Loss: {loss:.5f} - Accuracy: {acc:.4f}")
 
     return model
 # Validation & Testing Function
@@ -265,39 +814,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
         }
     else:
         raise RuntimeError("unsupported quantization parameters")
-    #
-    
-#     # ✅ Step 1: Collect all layers that need BatchNorm
-#     missing_bn_layers = []
-#     for name, module in nn_model.named_modules():
-#      if isinstance(module, nn.Conv2d) and not hasattr(module, "bn"):
-#         print(f"Adding BatchNorm2d to {name}")
-#         missing_bn_layers.append((name, module.out_channels))
-
-# # ✅ Step 2: Apply the changes after iteration
-#     for name, out_channels in missing_bn_layers:
-#      setattr(nn_model, name + "_bn", nn.BatchNorm2d(out_channels))
-
-#     for name, module in nn_model.named_modules():
-#      if "weight_fake_quant" in name and getattr(module, "qconfig", None) is None:
-#         setattr(module, "qconfig", quantization.get_default_qconfig("fbgemm"))
-#      fixed_qparams_qconfig = quantization.QConfig(
-#     activation=FixedQParamsObserver.with_args(scale=1.0 / 255, zero_point=0, dtype=torch.quint8),
-#     weight=torch.ao.quantization.default_per_channel_weight_observer
-#     )
-    
-# # Apply `FixedQParamsObserver` only to ReLU, Softmax, and AvgPool layers
-#    qconfig_mapping =quantization.QConfigMapping()
-#     for name, module in nn_model.named_modules():
-#      print("modifying")
-#      if "activation_" in name or "dense_softmax" in name or "average_pooling2d" in name:
-#         qconfig_mapping.set_module_name(name, fixed_qparams_qconfig)
-
-#     for name, module in nn_model.named_modules():
-#      if "activation_post_process" in name and getattr(module, "qconfig", None) is None:
-#         print(f"Applying FixedQParamsObserver to {name}")
-#         qconfig_mapping.set_module_name(name, fixed_qparams_qconfig)
-   
+ 
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
             quant_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
@@ -313,7 +830,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             quant_model = GenericTinyMLPTQFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)
         else:
             raise RuntimeError(f"Unknown Quantization method: {quantization_method}")
-        #
+        
     else:
         raise RuntimeError(f"Unknown Quantization device type: {quantization_device_type}")
 
@@ -329,12 +846,12 @@ def calibrate_model(model: nn.Module, dataloader: DataLoader, total_epochs: int)
     # loss_fn for multi class classification
     loss_fn = torch.nn.CrossEntropyLoss()
     
-    with torch.no_grad():
-     for epoch in range(total_epochs):
+   # with torch.no_grad():
+    for epoch in range(total_epochs):
         # train the model for an epoch
         loss, model, loss_fn, opti = calibrate(dataloader, model, loss_fn)
         last_lr = 0
-       # print(f"Epoch: {epoch+1}\t LR: {round(last_lr,5)}\t Loss: {round(loss, 5)}")
+        print(f"Epoch: {epoch+1}\t LR: {round(last_lr,5)}\t Loss: {round(loss, 5)}")
 
     return model
 
@@ -364,20 +881,7 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
        # compare_fp32_and_quantized_weights(quant_model)
         else:
          quant_model = quantize_fx.convert_fx(quant_model.module)
-    #  Print layer-wise quantization parameters with range
-  #  print_layerwise_quant_params(quant_model)
-   # print(quant_model)
    
-    #  Save quantized model
-    q_model_path = "final_quantized_model.pth"
-    torch.save(quant_model.state_dict(), q_model_path)
-    print(f" Quantized final model saved at {q_model_path}")
-
-    #  Print final model structure to file
-    file_path = "final_model_print.txt"
-    with open(file_path, "w") as f:
-        f.write(str(quant_model))
-
     #  Export to ONNX
     if hasattr(quant_model, "export"):
         print(" Exporting to ONNX...")
@@ -429,37 +933,31 @@ def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: in
 
 def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     """
-    The function takes the saved onnx model, torch test dataloader to give the accuracy of the model.
+    Validate the saved ONNX model using the test DataLoader.
     """
     correct_predictions = 0
     total_predictions = 0
-    # set ort inference session options
+
     ort_session_options = ort.SessionOptions()
     ort_session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-    # start the inference session with the model_name saved in disk
-    ort_session = ort.InferenceSession(f"{model_name}", ort_session_options)
-    
+    ort_session = ort.InferenceSession(model_name, ort_session_options)
 
-    for _, batch in enumerate(dataloader):
-     X= batch["audio"].clone().to(DEVICE)
-     Y= batch["label"].clone().to(torch.long).to(DEVICE)
-  #   X, Y = batch["audio"], batch["label"]
-     for idx in range(len(X)):
-            total_predictions += 1
-            # add a new axis at the beginning of data
-            data_point = X[idx].numpy()[np.newaxis, ...]
-            # classify the data_point
-            # outputs = ort_session.run(None, {'x': data_point})
-            outputs = ort_session.run(None, {'input': data_point})
-            conf_1 = outputs[0].flatten()
-            # check if the classification is correct
-            if conf_1.argmax(0) == Y[idx]:
-                correct_predictions += 1
+    for batch in dataloader:
+        X = batch["audio"].numpy()  # Convert PyTorch tensor to NumPy
+        Y = batch["label"].numpy()
 
-    accuracy = round(correct_predictions/total_predictions, 5)
+        # Run inference on batch instead of individual samples
+        outputs = ort_session.run(None, {'input': X})  # Expecting batch input
+
+        # Convert predictions to class indices
+        preds = np.argmax(outputs[0], axis=1)
+
+        # Count correct predictions
+        correct_predictions += np.sum(preds == Y)
+        total_predictions += Y.shape[0]
+
+    accuracy = round(correct_predictions / total_predictions, 5)
     return accuracy
-
-
 
 def load_calibration_indices(file_path):
     """Load indices from a calibration indices file."""
@@ -472,64 +970,60 @@ def create_calibration_dataset(dataset, indices):
     from torch.utils.data import Subset
     return Subset(dataset, indices)
 
-
-    
 if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0,1,2,3,4,5,6,7,8,9,10,11]
-    NUM_EPOCHS = 36 #10 acc was 92.2
+    NUM_EPOCHS = 36#10 acc was 92.2
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
-    LEARNING_RATE = 0.00001
-    QUANTIZATION_METHOD = 'PTQ' #'PTQ' #'QAT' #None
+    LEARNING_RATE = 0.5
+    QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #True, #False
+    NUM_CATEGORIES = 12  
 
     assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
         'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
-
     
-    Flags, unparsed = kws_util.parse_command()
-#    train_loader = SavedTensorDataset(dataset_dir=r"C:\Users\A0507182\torch_kws_flow\__mlperf_vcdataset\__mlperf_vcdataset\train")
-    test_loader = SavedTensorDataset(dataset_dir=r"C:\Users\A0507182\torch_kws_flow\__mlperf_vcdataset\__mlperf_vcdataset\test")
-    test_loader = DataLoader(test_loader, batch_size=1, shuffle=False)
- #   train_loader = DataLoader(train_loader, batch_size=100, shuffle=True, num_workers=0)
+    root="."
+
+    #Downloading and preparing the dataset
+    prepare_dataset(root) 
+
+    #Define the dataloaders
+    save_dir = rf"{root}\SpeechCommands\tensor_vcdataset"
+    train_loader = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
+    test_loader = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
+    test_loader = DataLoader(test_loader, batch_size=256, shuffle=False, drop_last=True)
+    train_loader = DataLoader(train_loader, batch_size=256, shuffle=True, num_workers=0)
     
     calibration_indices_file = r"quant_cal_idxs.txt"  # Path to calibration indices
 
-    # Load calibration indices
+   # Load calibration indices
     calibration_indices = load_calibration_indices(calibration_indices_file)
     print(f"Loaded {len(calibration_indices)} indices for calibration.")
-    validation_dataset = SavedTensorDataset(dataset_dir=r"C:\Users\A0507182\torch_kws_flow\__mlperf_vcdataset\__mlperf_vcdataset\val")
+    validation_dataset = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"val"))
     calibration_dataset = create_calibration_dataset(validation_dataset, calibration_indices)
-    calibration_loader = DataLoader(dataset=calibration_dataset, batch_size=1, shuffle=False)
+    calibration_loader = DataLoader(dataset=calibration_dataset, batch_size=256, shuffle=False)
     
     example_batch = next(iter(test_loader))
 
 
     example_input = example_batch["audio"].float()  # Add channel dimension
  
-    nn_model, _ = models.get_model(args=Flags)
+    #Import model structure
+    nn_model = DSCNN()
   
-    #nn_model = nn_model.to("cpu")
-  
-    #nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
-    #accuracy = validate_model(nn_model, test_loader, 12, CATEGORIES_NAME)
-    #print("OG model accuracy is", accuracy)
-    path = r"C:\Users\A0507182\Documents\tinyml-modeloptimization\torchmodelopt\examples\Keyword_Spotting\trained_models\kws_torch.pth"
-    checkpoint = torch.load(path , map_location="cpu")
-    nn_model.load_state_dict(checkpoint)
-    #nn_model=torch.load(path)
-    accuracy = validate_model(nn_model, test_loader, 12, CATEGORIES_NAME)
+    nn_model = nn_model.to("cpu")
+    
+    #Train and Validate fp32 model
+    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
     print("OG model accuracy is", accuracy)
-    # ✅ Print final model structure to file
-    file_path = "orignal_nn_model_print.txt"
-    with open(file_path, "w") as f:
-        f.write(str(nn_model))
-  
+    
     print("Example Input Shape:", example_input)
     print("Example Input Shape:", example_input.shape)
     example_input = example_input.to(DEVICE).float()
@@ -551,9 +1045,11 @@ if __name__ == '__main__':
         quantized_model_path = os.path.join("quantized_model.pth")
         torch.save(quant_model.state_dict(), quantized_model_path)
         print(f"Quantized model saved at {quantized_model_path}")
-        accuracy = validate_model(quant_model, test_loader, 12, CATEGORIES_NAME)
+        accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
-      
+        file_path = "quant_model_print.txt"
+        with open(file_path, "w") as f:
+         f.write(str(quant_model.module.graph))
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
         
@@ -562,19 +1058,4 @@ if __name__ == '__main__':
     
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
-    path_converted_model=r"C:\Users\A0507182\Documents\tinyml-modeloptimization\torchmodelopt\examples\Keyword_Spotting\final_quantized_model.pth"
-    
-    nn_model2, _ = models.get_model(args=Flags)
   
-    #nn_model = nn_model.to("cpu")
-  
-    #nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
-    #accuracy = validate_model(nn_model, test_loader, 12, CATEGORIES_NAME)
-    #print("OG model accuracy is", accuracy)
-  #  path = r"C:\Users\A0507182\Documents\tinyml-modeloptimization\torchmodelopt\examples\Keyword_Spotting\trained_models\kws_torch.pth"
-  #  checkpoint2 = torch.load(path_converted_model , map_location="cpu")
-  #  nn_model2.load_state_dict(checkpoint2)
-   # accuracy = validate_model(nn_model2, test_loader, 12, CATEGORIES_NAME)
-   # print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
-    
-
