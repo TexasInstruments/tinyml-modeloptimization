@@ -717,7 +717,7 @@ def calibrate(dataloader: DataLoader, model: nn.Module, loss_fn):
             loss = loss_fn(outputs, labels)
             avg_loss += loss.item()
 
-          #  print(f"Calibration Batch {batch_idx}: Loss: {loss.item()}")
+            print(f"Calibration Batch {batch_idx}: Loss: {loss.item()}")
 
     avg_loss /= total_batches
     print(f"Calibration complete. Average Loss: {avg_loss}")
@@ -876,10 +876,12 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
     # Convert model using FX Graph-based quantization if needed
     if with_quant:
         if hasattr(quant_model, "convert"):
+         
          print(" Running `convert()` on quant_model...")
          quant_model = quant_model.convert()
-       # compare_fp32_and_quantized_weights(quant_model)
+
         else:
+         
          quant_model = quantize_fx.convert_fx(quant_model.module)
    
     #  Export to ONNX
@@ -903,10 +905,10 @@ def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: in
     y_pred = []
 
     for batch_idx, batch in enumerate(test_loader):
-      #   X, y =  batch["audio"].clone.to(DEVICE), batch["label"].clone().to(torch.long).to(DEVICE)
+  
         X = batch["audio"].clone().to(DEVICE)
         y = batch["label"].clone().to(torch.long).to(DEVICE)
-    #    X, y = batch["audio"].to(DEVICE).float(), torch.tensor(batch["label"], dtype=torch.long).to(DEVICE)
+
         # make prediction for the current batch
         pred = model(X)
         pred = pred.flatten(start_dim=1)
@@ -943,11 +945,11 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     ort_session = ort.InferenceSession(model_name, ort_session_options)
 
     for batch in dataloader:
-        X = batch["audio"].numpy()  # Convert PyTorch tensor to NumPy
+        X = batch["audio"].numpy()  
         Y = batch["label"].numpy()
 
-        # Run inference on batch instead of individual samples
-        outputs = ort_session.run(None, {'input': X})  # Expecting batch input
+        
+        outputs = ort_session.run(None, {'input': X})  
 
         # Convert predictions to class indices
         preds = np.argmax(outputs[0], axis=1)
@@ -960,7 +962,7 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     return accuracy
 
 def load_calibration_indices(file_path):
-    """Load indices from a calibration indices file."""
+    """Loadindices from a calibration indices file."""
     with open(file_path, "r") as f:
         indices = [int(line.strip()) for line in f if line.strip().isdigit()]
     return indices
@@ -1024,17 +1026,13 @@ if __name__ == '__main__':
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
     print("OG model accuracy is", accuracy)
     
-    print("Example Input Shape:", example_input)
-    print("Example Input Shape:", example_input.shape)
-    example_input = example_input.to(DEVICE).float()
-
   
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
+
         MODEL_NAME = 'quant_' + MODEL_NAME
         quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,quantization_device_type=QUANTIZATION_DEVICE_TYPE)
-        for name, module in quant_model.named_modules():
-         print(f"Layer: {name}, Type: {type(module)}, QConfig: {getattr(module, 'qconfig', None)}")
+      
         if QUANTIZATION_METHOD == 'QAT':
             quant_learning_rate = (LEARNING_RATE/100) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
          
@@ -1042,14 +1040,10 @@ if __name__ == '__main__':
        
         elif QUANTIZATION_METHOD == 'PTQ':
             quant_model = calibrate_model(quant_model, calibration_loader, quant_epochs)
-        quantized_model_path = os.path.join("quantized_model.pth")
-        torch.save(quant_model.state_dict(), quantized_model_path)
-        print(f"Quantized model saved at {quantized_model_path}")
+        
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
-        file_path = "quant_model_print.txt"
-        with open(file_path, "w") as f:
-         f.write(str(quant_model.module.graph))
+
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
         
