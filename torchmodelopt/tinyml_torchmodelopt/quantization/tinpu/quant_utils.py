@@ -21,7 +21,7 @@ class TINPUQuantizedReplacementUtils():
             self.from_placeholder(start_node, end_node)
 
         self._propagate_quant_params()
-        self.rename_nodes()
+        # self.rename_nodes()
         self.from_first_layer()
 
     def _get_nodes(self) -> List[Node]:
@@ -147,24 +147,18 @@ class TINPUQuantizedReplacementUtils():
         scale, zero_point = 1.0, 0.0
         if using == 'prev':
             node_name = node.target.replace('.', '_')
-            prev_node: Node = self.graph_quant_params[node_name]['prev'][0]
-            if isinstance(prev_node.target, str):
-                prev_node_name = prev_node.target.replace('.', '_')
-            else:
-                prev_node_name = prev_node.name
+            prev_node: Node = self.graph_quant_params[node.name]['prev'][0]
+            prev_node_name = prev_node.name
             scale = self.graph_quant_params[prev_node_name]['scale']
             zero_point = self.graph_quant_params[prev_node_name]['zero_point']
         if using == 'this':
             node_name = node.target.replace('.', '_')
-            scale = self.graph_quant_params[node_name]['scale']
-            zero_point = self.graph_quant_params[node_name]['zero_point']
+            scale = self.graph_quant_params[node.name]['scale']
+            zero_point = self.graph_quant_params[node.name]['zero_point']
         if using == 'next':
             node_name = node.target.replace('.', '_')
-            next_node: Node = self.graph_quant_params[node_name]['next'][0]
-            if isinstance(next_node.target, str):
-                next_node_name = next_node.target.replace('.', '_')
-            else:
-                next_node_name = next_node.name
+            next_node: Node = self.graph_quant_params[node.name]['next'][0]
+            next_node_name = next_node.name
             scale = self.graph_quant_params[next_node_name]['scale']
             zero_point = self.graph_quant_params[next_node_name]['zero_point']
         return (scale, zero_point)

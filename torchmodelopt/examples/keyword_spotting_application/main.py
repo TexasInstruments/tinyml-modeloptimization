@@ -1020,7 +1020,11 @@ if __name__ == '__main__':
     nn_model = DSCNN()
   
     nn_model = nn_model.to("cpu")
-    
+   
+    path=r"C:\Users\A0507182\tf2onnx_onnx2pytorch_kwsmodel_onnx2torch.pth"
+    checkpoint = torch.load(path, map_location=torch.device('cpu'))
+    nn_model.load_state_dict(checkpoint)
+    #nn_model=torch.load(path)
     #Train and Validate fp32 model
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)

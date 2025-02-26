@@ -124,14 +124,15 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),                  # Removes dequantization
             ([torch.quantize_per_tensor, torch.nn.Flatten], replacement_utils.from_q_module),        # Removes quantization
             # Torch Functions
-            ([torch.ops.quantized.add_relu], replacement_utils.from_add_relu),
-            ([torch.ops.quantized.add], replacement_utils.from_add),
+            # ([torch.ops.quantized.add_relu], replacement_utils.from_add_relu),
+            # ([torch.ops.quantized.add], replacement_utils.from_add),
             # ConvRelu2D Module
             ([torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d], replacement_utils.from_qconv_relu),
             ([torch.ao.nn.quantized.modules.conv.Conv2d], replacement_utils.from_qconv),
             # LinearRelu Module
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], replacement_utils.from_qlinear_relu),
             ([torch.ao.nn.quantized.modules.linear.Linear], replacement_utils.from_qlinear),
+            ([torch.ops.quantized.matmul], replacement_utils.from_qlinear),
             # Leftover Modules
             ([torch.quantize_per_tensor], replacement_utils.from_q),
         ]
@@ -157,7 +158,10 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         for replacement_pattern, replacement_function in replacement_rules:
             matches = replacement_utils.search_pattern(replacement_pattern)
             for (start, end) in matches:
-                replacement_function(start, end)
+                if replacement_function == replacement_utils.from_qlinear:
+                    replacement_function(start, end)
+                else:
+                    replacement_function(start, end)
         replacement_utils.update_module(module)
         return module
 
