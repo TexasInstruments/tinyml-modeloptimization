@@ -1002,7 +1002,7 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_loader, batch_size=256, shuffle=False, drop_last=True)
     train_loader = DataLoader(train_loader, batch_size=256, shuffle=True, num_workers=0)
     
-    calibration_indices_file = r"quant_cal_idxs.txt"  # Path to calibration indices
+    calibration_indices_file = r"quant_cal_indices_mlperf.txt"  # Path to calibration indices
 
    # Load calibration indices
     calibration_indices = load_calibration_indices(calibration_indices_file)
@@ -1020,11 +1020,7 @@ if __name__ == '__main__':
     nn_model = DSCNN()
   
     nn_model = nn_model.to("cpu")
-   
-    path=r"C:\Users\A0507182\tf2onnx_onnx2pytorch_kwsmodel_onnx2torch.pth"
-    checkpoint = torch.load(path, map_location=torch.device('cpu'))
-    nn_model.load_state_dict(checkpoint)
-    #nn_model=torch.load(path)
+    
     #Train and Validate fp32 model
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
