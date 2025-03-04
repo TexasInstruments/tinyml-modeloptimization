@@ -257,7 +257,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
     lint_and_recompile(main_module)
     return None
 
-def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
+def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0, rename_node_flag: bool=False) -> None:
     ''' The call module associated with the start node is replaced with the replace module. All the intermediate
     nodes are removed between start to end.
 
@@ -274,8 +274,9 @@ def replace_call_module(main_module: GraphModule, start: Node, end: Node, replac
     # Set the attribute of parent module with the replacement module
     parent_module.__setattr__(attr_name, replace_module)
     
-    new_node_name = get_name_from_module(replace_module, module_no)
-    # start.name = new_node_name
+    if rename_node_flag:
+        new_node_name = get_name_from_module(replace_module, module_no)
+        start.name = new_node_name
 
     # If there are more nodes between start and end, remove them all
     if start != end:

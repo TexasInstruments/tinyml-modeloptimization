@@ -44,7 +44,7 @@ from . import quant_utils
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
-                 total_epochs=0, num_batch_norm_update_epochs=False, num_observer_update_epochs=False, prepare_qdq=True):
+                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None, prepare_qdq=True):
         '''
         Parameters:
             model: input model to be quantized

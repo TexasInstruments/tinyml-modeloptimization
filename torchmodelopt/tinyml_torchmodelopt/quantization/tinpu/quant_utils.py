@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 from .quant_modules import *
 
 class TINPUQuantizedReplacementUtils():
-    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int):
+    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool):
 
         self.module: GraphModule = model
         self.graph_quant_params: Dict[str, Dict] = dict()
@@ -13,7 +13,8 @@ class TINPUQuantizedReplacementUtils():
 
         self.weight_bw = weight_bw
         self.activation_bw = activation_bw
-        self.num_bits_scale = 8 if weight_bw <= 4 else 1
+        self.num_bits_scale = 1 if power2_scale else 8
+        self.rename_nodes_flag = False
 
         if self._check_module_before_quant():
             nodes = self._get_nodes()
@@ -21,7 +22,8 @@ class TINPUQuantizedReplacementUtils():
             self.from_placeholder(start_node, end_node)
 
         self._propagate_quant_params()
-        # self.rename_nodes()
+        if self.rename_nodes_flag:
+            self.rename_nodes()
         self.from_first_layer()
 
     def _get_nodes(self) -> List[Node]:
@@ -146,19 +148,31 @@ class TINPUQuantizedReplacementUtils():
     def get_q_params(self, node: Node, using: str='prev') -> Tuple[float]:
         scale, zero_point = 1.0, 0.0
         if using == 'prev':
-            node_name = node.target.replace('.', '_')
-            prev_node: Node = self.graph_quant_params[node.name]['prev'][0]
-            prev_node_name = prev_node.name
+            node_name = node.name
+            if self.rename_nodes_flag and node.op != 'call_method':
+                node_name = node.target.replace('.', '_')
+            prev_node: Node = self.graph_quant_params[node_name]['prev'][0]
+            if isinstance(prev_node.target, str) and self.rename_nodes_flag:
+                prev_node_name = prev_node.target.replace('.', '_')
+            else:
+                prev_node_name = prev_node.name
             scale = self.graph_quant_params[prev_node_name]['scale']
             zero_point = self.graph_quant_params[prev_node_name]['zero_point']
         if using == 'this':
-            node_name = node.target.replace('.', '_')
-            scale = self.graph_quant_params[node.name]['scale']
-            zero_point = self.graph_quant_params[node.name]['zero_point']
+            node_name = node.name
+            if self.rename_nodes_flag:
+                node_name = node.target.replace('.', '_')
+            scale = self.graph_quant_params[node_name]['scale']
+            zero_point = self.graph_quant_params[node_name]['zero_point']
         if using == 'next':
-            node_name = node.target.replace('.', '_')
-            next_node: Node = self.graph_quant_params[node.name]['next'][0]
-            next_node_name = next_node.name
+            node_name = node.name
+            if self.rename_nodes_flag and node.op != 'call_method':
+                node_name = node.target.replace('.', '_')
+            next_node: Node = self.graph_quant_params[node_name]['next'][0]
+            if isinstance(next_node.target, str):
+                next_node_name = next_node.target.replace('.', '_')
+            else:
+                next_node_name = next_node.name
             scale = self.graph_quant_params[next_node_name]['scale']
             zero_point = self.graph_quant_params[next_node_name]['zero_point']
         return (scale, zero_point)
@@ -280,7 +294,7 @@ class TINPUQuantizedReplacementUtils():
         else:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.activation_bw + 1, 2**self.activation_bw - 1)
             seq_module = torch.nn.Sequential(conv_module, oss_module)
-        replace_call_module(self.module, start, end, seq_module, self._get_module_num())
+        replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
         return None
 
     def from_qconv(self, start: Node, end: Node, with_relu: bool=False):
@@ -325,7 +339,7 @@ class TINPUQuantizedReplacementUtils():
         else:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
             seq_module = torch.nn.Sequential(linear_module, oss_module)
-        replace_call_module(self.module, start, end, seq_module, self._get_module_num())
+        replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
         return None
 
     def from_qlinear_relu(self, start: Node, end: Node):
@@ -338,7 +352,7 @@ class TINPUQuantizedReplacementUtils():
         replace_module = named_modules[start.target]
         q_node = list(start.users)[-1]
         # Replaces the flatten module/flatten method with flatten module and drops the nodes till quantization node
-        replace_call_module(self.module, start, q_node, replace_module, self._get_module_num())
+        replace_call_module(self.module, start, q_node, replace_module, self._get_module_num(), self.rename_nodes_flag)
         return None
 
     def from_dq(self, start: Node, end: Node):
@@ -412,7 +426,7 @@ class TINPUQuantizedReplacementUtils():
         # Sequential Module comprising of AvgPool2D, Multiply, Round, OSS
         output_module = torch.nn.Sequential(pool_module, mult_module, round_module, oss_module)
         # Replace AvgPool2D with Sequential Module
-        replace_call_module(self.module, start, end, output_module, self._get_module_num())
+        replace_call_module(self.module, start, end, output_module, self._get_module_num(), self.rename_nodes_flag)
         return None
     
     def from_adaptive_avg_pool2d(self, start: Node, end: Node):
@@ -427,14 +441,14 @@ class TINPUQuantizedReplacementUtils():
         total_kernel_area = pool_module.output_size[0] * pool_module.output_size[1]
         if total_kernel_area != 1:
             #  If output size isn't (1, 1), we will use the generic implementation
-            replace_call_module(self.module, start, end, pool_module, self._get_module_num())
+            replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
             return None
         pool_module = AdaptiveAvgPool2d(activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
-        replace_call_module(self.module, start, end, pool_module, self._get_module_num())
+        replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
         return None
 
     def from_max_pool2d(self, start: Node, end: Node):
         pool_module = self._get_named_modules()[start.target]
-        replace_call_module(self.module, start, end, pool_module, self._get_module_num())
+        replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
         return None
