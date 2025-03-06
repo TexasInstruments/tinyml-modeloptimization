@@ -14,7 +14,7 @@ from scipy.io import wavfile
 from pydub import AudioSegment
 
 
-import torch_model as models
+#import torch_model as models
 # ti, onnx imports
 from tinyml_torchmodelopt.quantization import \
     TINPUTinyMLQATFxModule, TINPUTinyMLPTQFxModule, GenericTinyMLQATFxModule, GenericTinyMLPTQFxModule
@@ -317,10 +317,10 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     # Download Dataset
-    if os.path.exists(rf"{root}\SpeechCommands") and not force:
+    if os.path.exists(os.path.join(root, "SpeechCommands")) and not force:
         print("Dataset already downloaded.")
         return
-    elif os.path.exists(rf"{root}\SpeechCommands") and force:
+    elif os.path.exists(os.path.join(root, "SpeechCommands")) and force:
         shutil.rmtree(rf"{root}\SpeechCommands")
     print("Downloading dataset......")
     full_dataset = torchaudio.datasets.SPEECHCOMMANDS(
@@ -330,8 +330,8 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
     
     # Separate into train/test/val
     print("Rearranging/Filtering dataset......")
-    raw_dataset_path = rf"{root}\SpeechCommands\speech_commands_v0.02"
-    filtered_dataset_path = rf"{root}\SpeechCommands\google_vcdataset"
+    raw_dataset_path = os.path.join(root, "SpeechCommands", "speech_commands_v0.02")
+    filtered_dataset_path = os.path.join(root, "SpeechCommands", "google_vcdataset")
     if not os.path.isdir: 
         os.mkdir(filtered_dataset_path)
     train_dir = os.path.join(filtered_dataset_path, "train")
@@ -996,7 +996,7 @@ if __name__ == '__main__':
     prepare_dataset(root) 
 
     #Define the dataloaders
-    save_dir = rf"{root}\SpeechCommands\tensor_vcdataset"
+    save_dir = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
     train_loader = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
     test_loader = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
     test_loader = DataLoader(test_loader, batch_size=256, shuffle=False, drop_last=True)
