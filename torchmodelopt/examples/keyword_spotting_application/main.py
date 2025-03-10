@@ -120,6 +120,7 @@ def which_set(filename, validation_percentage, testing_percentage):
     # To do that, we need a stable way of deciding based on just the file name
     # itself, so we do a hash of that and then use that to generate a
     # probability value that we use to assign it.
+    import hashlib
     hash_name_hashed = hashlib.sha1(hash_name.encode('utf-8')).hexdigest()
     percentage_hash = ((int(hash_name_hashed, 16) %
                         (MAX_NUM_WAVS_PER_CLASS + 1)) *
@@ -959,7 +960,7 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     return accuracy
 
 def load_calibration_indices(file_path):
-    """Loadindices from a calibration indices file."""
+    """Load indices from a calibration indices file."""
     with open(file_path, "r") as f:
         indices = [int(line.strip()) for line in f if line.strip().isdigit()]
     return indices
@@ -994,8 +995,8 @@ if __name__ == '__main__':
     save_dir = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
     train_loader = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
     test_loader = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
-    test_loader = DataLoader(test_loader, batch_size=256, shuffle=False, drop_last=True)
-    train_loader = DataLoader(train_loader, batch_size=256, shuffle=True, num_workers=0)
+    train_loader = DataLoader(train_loader, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_loader, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
     
     calibration_indices_file = r"quant_cal_indices_mlperf.txt"  # Path to calibration indices
 
