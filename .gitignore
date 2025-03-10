@@ -1,3 +1,4 @@
 torchmodelopt/examples/keyword_spotting_application/SpeechCommands/
+*.onnx
 *.pyc
 *.egg-info

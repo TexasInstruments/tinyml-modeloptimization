@@ -133,6 +133,7 @@ def which_set(filename, validation_percentage, testing_percentage):
     # To do that, we need a stable way of deciding based on just the file name
     # itself, so we do a hash of that and then use that to generate a
     # probability value that we use to assign it.
+    import hashlib
     hash_name_hashed = hashlib.sha1(hash_name.encode('utf-8')).hexdigest()
     percentage_hash = ((int(hash_name_hashed, 16) %
                         (MAX_NUM_WAVS_PER_CLASS + 1)) *
@@ -410,11 +411,11 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
 
     # Preprocess and save as .pt tensors
     print("Preparing Saved TensorDataset....")
-    dataset_dir = rf"{root}\SpeechCommands\google_vcdataset"
-    save_dir = rf"{root}\SpeechCommands\tensor_vcdataset"
+    dataset_dir = os.path.join(root, "SpeechCommands", "google_vcdataset")
+    save_dir = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
     os.mkdir(save_dir)
     # Prepare bg noise data
-    background_data = prepare_background_data(rf"{root}\SpeechCommands\speech_commands_v0.02", "_background_noise_")
+    background_data = prepare_background_data(os.path.join(root, "SpeechCommands", "speech_commands_v0.02"), "_background_noise_")
     # Create dataset generator handles
     trainset_generator = GoogleSpeechDatasetGenerator(
         dataset_dir=os.path.join(dataset_dir, "train"),
@@ -962,7 +963,7 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     return accuracy
 
 def load_calibration_indices(file_path):
-    """Loadindices from a calibration indices file."""
+    """Load indices from a calibration indices file."""
     with open(file_path, "r") as f:
         indices = [int(line.strip()) for line in f if line.strip().isdigit()]
     return indices
@@ -975,10 +976,11 @@ def create_calibration_dataset(dataset, indices):
 if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
-    CATEGORIES_NAME = [ 0,1,2,3,4,5,6,7,8,9,10,11]
-    NUM_EPOCHS = 36#10 acc was 92.2
+    CATEGORIES_NAME = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    NUM_EPOCHS = 8 #10 acc was 92.2
     WINDOW_LENGTH = 1024
     WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
+    BATCH_SIZE = 1024
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
@@ -999,8 +1001,8 @@ if __name__ == '__main__':
     save_dir = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
     train_loader = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
     test_loader = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
-    test_loader = DataLoader(test_loader, batch_size=256, shuffle=False, drop_last=True)
-    train_loader = DataLoader(train_loader, batch_size=256, shuffle=True, num_workers=0)
+    train_loader = DataLoader(train_loader, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_loader, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
     
     calibration_indices_file = r"quant_cal_indices_mlperf.txt"  # Path to calibration indices
 
@@ -1017,8 +1019,8 @@ if __name__ == '__main__':
     example_input = example_batch["audio"].float()  # Add channel dimension
  
     #Import model structure
-    nn_model = DSCNN()
-  
+    # nn_model = DSCNN()
+    nn_model  = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
     nn_model = nn_model.to("cpu")
     
     #Train and Validate fp32 model
