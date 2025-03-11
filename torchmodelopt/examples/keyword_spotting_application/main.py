@@ -189,7 +189,7 @@ class AudioPreprocessor(object):
         # Pad
         audio_tensor = F.pad(audio_tensor, (0, self.n_audio - audio_tensor.shape[-1]))
         
-        print(audio_tensor)
+        
         # bg Noise augmentation
         if self.flag_trainer and self.flag_background_noise:
             audio_tensor = self.add_bgNoise(audio_tensor)
@@ -207,7 +207,7 @@ class AudioPreprocessor(object):
     def compute_tfMFCC(self, audio_tensor):
         # Convert to TF Tensor
         spectrogram_length = 1 + int ((self.n_audio - int(self.sr * 30 / 1000)) / int(self.sr * 20 / 1000))
-        print(tf.config.list_physical_devices('GPU'))
+        
         
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         audio_tensor_tf = tf.convert_to_tensor(audio_tensor.numpy(), dtype=tf.float32)
@@ -296,7 +296,6 @@ class GoogleSpeechDatasetGenerator(object):
                     for audio_file in os.listdir(label_dir):
                         if audio_file.endswith(('.wav', '.WAV')):
                             raw_audio_wave, _ = torchaudio.load(os.path.join(label_dir, audio_file))
-                            print(raw_audio_wave.shape)
                             audio_wave = self.audio_preprocessor(raw_audio_wave)
                             save_label_dir = os.path.join(self.save_dir, label)
                             if not os.path.isdir(save_label_dir):
@@ -316,7 +315,7 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
         print("Dataset already downloaded.")
         return
     elif os.path.exists(os.path.join(root, "SpeechCommands")) and force:
-        shutil.rmtree(rf"{root}\SpeechCommands")
+        shutil.rmtree(os.path.join(root, "SpeechCommands"))
     print("Downloading dataset......")
     full_dataset = torchaudio.datasets.SPEECHCOMMANDS(
         root=root,      # Specify your download directory
@@ -973,7 +972,7 @@ def create_calibration_dataset(dataset, indices):
 if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
-    CATEGORIES_NAME = [ 0,1,2,3,4,5,6,7,8,9,10,11]
+    CATEGORIES_NAME = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     NUM_EPOCHS = 36
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
