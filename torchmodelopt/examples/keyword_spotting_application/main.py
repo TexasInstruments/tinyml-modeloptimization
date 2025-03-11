@@ -4,48 +4,35 @@ from torch.ao.quantization import quantize_fx
 import torch.utils
 import torch.nn as nn
 import torch.utils.data
-from torch.utils.data import Dataset, DataLoader, random_split
-import torchinfo
+from torch.utils.data import Dataset, DataLoader
 import os
 import shutil
 import re
 import torchaudio
 from scipy.io import wavfile
 from pydub import AudioSegment
+from typing import Tuple, List
 
-
-#import torch_model as models
-# ti, onnx imports
 from tinyml_torchmodelopt.quantization import \
     TINPUTinyMLQATFxModule, TINPUTinyMLPTQFxModule, GenericTinyMLQATFxModule, GenericTinyMLPTQFxModule
 import onnx
 import onnxruntime as ort
-import sys
 # other imports
 import numpy as np
 import pandas as pd
-from typing import Tuple, List
 from sklearn.metrics import confusion_matrix
-import torch.ao.ns._numeric_suite_fx as ns
-from torch.fx import symbolic_trace
-from torch.ao.quantization.observer import FixedQParamsObserver
-import torch.ao.quantization as quantization
-
-
-import torch
 import torch.nn.functional as F
 
 
-from torchinfo import summary
 from torchmetrics.classification import Accuracy
 from tqdm import tqdm
 import tensorflow as tf
-import tarfile
 import torch.optim as optim
+import hashlib
 
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
+#DEVICE='cpu'
 def process_audio_file(file_path, label, output_dir, SAMPLE_RATE=16000):
     """
     Process a .wav audio file by splitting it into 1-second segments and saving them as .wav files.
@@ -133,6 +120,7 @@ def which_set(filename, validation_percentage, testing_percentage):
     # To do that, we need a stable way of deciding based on just the file name
     # itself, so we do a hash of that and then use that to generate a
     # probability value that we use to assign it.
+    import hashlib
     hash_name_hashed = hashlib.sha1(hash_name.encode('utf-8')).hexdigest()
     percentage_hash = ((int(hash_name_hashed, 16) %
                         (MAX_NUM_WAVS_PER_CLASS + 1)) *
@@ -200,7 +188,8 @@ class AudioPreprocessor(object):
             audio_tensor = audio_tensor / 2 ** 15
         # Pad
         audio_tensor = F.pad(audio_tensor, (0, self.n_audio - audio_tensor.shape[-1]))
-
+        
+        print(audio_tensor)
         # bg Noise augmentation
         if self.flag_trainer and self.flag_background_noise:
             audio_tensor = self.add_bgNoise(audio_tensor)
@@ -218,6 +207,9 @@ class AudioPreprocessor(object):
     def compute_tfMFCC(self, audio_tensor):
         # Convert to TF Tensor
         spectrogram_length = 1 + int ((self.n_audio - int(self.sr * 30 / 1000)) / int(self.sr * 20 / 1000))
+        print(tf.config.list_physical_devices('GPU'))
+        
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         audio_tensor_tf = tf.convert_to_tensor(audio_tensor.numpy(), dtype=tf.float32)
         stfts = tf.signal.stft(audio_tensor_tf, frame_length=int(self.sr * 30 / 1000), 
                     frame_step=int(self.sr * 20 / 1000), fft_length=None,
@@ -240,6 +232,7 @@ class AudioPreprocessor(object):
         mfccs_tf = tf.signal.mfccs_from_log_mel_spectrograms(log_mel_spectrograms)[..., :self.n_mfcc]
         mfccs_tf = tf.reshape(mfccs_tf, [1, spectrogram_length, self.n_mfcc])
         mfccs = torch.tensor(mfccs_tf.numpy(), dtype=torch.float32)
+        os.environ["CUDA_VISIBLE_DEVICES"] = "1"
         return mfccs
     
     def compute_torchMFCC(self, audio_tensor):
@@ -258,6 +251,7 @@ class AudioPreprocessor(object):
         return mfccs
     
     def add_bgNoise(self, audio_tensor):
+        print("printing background data length", len(self.background_data))
         background_index = np.random.randint(len(self.background_data))
         background_samples = self.background_data[background_index]
         background_offset = np.random.randint(0, len(background_samples) - self.n_audio)
@@ -302,6 +296,7 @@ class GoogleSpeechDatasetGenerator(object):
                     for audio_file in os.listdir(label_dir):
                         if audio_file.endswith(('.wav', '.WAV')):
                             raw_audio_wave, _ = torchaudio.load(os.path.join(label_dir, audio_file))
+                            print(raw_audio_wave.shape)
                             audio_wave = self.audio_preprocessor(raw_audio_wave)
                             save_label_dir = os.path.join(self.save_dir, label)
                             if not os.path.isdir(save_label_dir):
@@ -410,11 +405,14 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
 
     # Preprocess and save as .pt tensors
     print("Preparing Saved TensorDataset....")
-    dataset_dir = rf"{root}\SpeechCommands\google_vcdataset"
-    save_dir = rf"{root}\SpeechCommands\tensor_vcdataset"
+    dataset_dir = os.path.join(root, "SpeechCommands", "google_vcdataset")
+    save_dir    = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
+   
     os.mkdir(save_dir)
     # Prepare bg noise data
-    background_data = prepare_background_data(rf"{root}\SpeechCommands\speech_commands_v0.02", "_background_noise_")
+    BACKGROUND_NOISE_DIR_NAME='_background_noise_'
+    background_data = prepare_background_data(os.path.join(root, "SpeechCommands", "speech_commands_v0.02"), BACKGROUND_NOISE_DIR_NAME)
+    print("print the background data before trainset_generator", background_data)
     # Create dataset generator handles
     trainset_generator = GoogleSpeechDatasetGenerator(
         dataset_dir=os.path.join(dataset_dir, "train"),
@@ -590,7 +588,7 @@ class SavedTensorDataset(Dataset):
         filename = self.filenames[index]  # Include filename
         return {"audio" : audio_tensor, "label" : label}
 
-def train(dataloader, model, loss_fn, optimizer, scheduler, device="cpu"):
+def train(dataloader, model, loss_fn, optimizer, scheduler):
     """
     Train the model for one epoch and print running accuracy.
     """
@@ -608,10 +606,10 @@ def train(dataloader, model, loss_fn, optimizer, scheduler, device="cpu"):
     running_corrects = 0
     total_samples = 0
 
-    accuracy_metric = Accuracy(task="multiclass", num_classes=12).to(device)  # Adjust `num_classes` as needed
+    accuracy_metric = Accuracy(task="multiclass", num_classes=12).to(DEVICE)  # Adjust `num_classes` as needed
 
     for batch_idx, data in enumerate(dataloader):
-        inputs, targets = data['audio'].to(device), data['label'].to(device)
+        inputs, targets = data['audio'].to(DEVICE), data['label'].to(DEVICE)
 
         # Forward pass
         optimizer.zero_grad()
@@ -643,7 +641,7 @@ def train(dataloader, model, loss_fn, optimizer, scheduler, device="cpu"):
 
     return avg_loss, avg_acc, model, loss_fn, optimizer
 
-def train_model(model, train_loader, total_epochs, learning_rate, device="cpu"):
+def train_model(model, train_loader, total_epochs, learning_rate):
     """
     Train the model for multiple epochs and display accuracy.
     """
@@ -654,7 +652,7 @@ def train_model(model, train_loader, total_epochs, learning_rate, device="cpu"):
     for epoch in range(total_epochs):
         print(f"\n🚀 Epoch {epoch + 1}/{total_epochs}")
 
-        loss, acc, model, loss_fn, optimizer = train(train_loader, model, loss_fn, optimizer, scheduler, device)
+        loss, acc, model, loss_fn, optimizer = train(train_loader, model, loss_fn, optimizer, scheduler)
 
         scheduler.step()
         last_lr = scheduler.get_last_lr()[0]
@@ -663,7 +661,7 @@ def train_model(model, train_loader, total_epochs, learning_rate, device="cpu"):
 
     return model
 # Validation & Testing Function
-def test(model, test_loader, loss_fn, device="cpu"):
+def test(model, test_loader, loss_fn):
     """
     Evaluate the model on test or validation data.
     
@@ -680,11 +678,11 @@ def test(model, test_loader, loss_fn, device="cpu"):
     model.eval()
     test_loss = 0
     test_acc = 0
-    accuracy = Accuracy(task="multiclass", num_classes=12).to(device)
+    accuracy = Accuracy(task="multiclass", num_classes=12)
 
     with torch.inference_mode():
         for batch in test_loader:
-            inputs, targets = batch['audio'].to(device), batch['label'].to(device)
+            inputs, targets = batch['audio'].to(DEVICE), batch['label'].to(DEVICE)
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
 
@@ -871,7 +869,7 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
     Export the quantized model and print its layer-wise quantization parameters.
     """
 
-    quant_model.to('cuda' if torch.cuda.is_available() else 'cpu')
+    quant_model.to(DEVICE)
 
     # Convert model using FX Graph-based quantization if needed
     if with_quant:
@@ -914,8 +912,8 @@ def validate_model(model: nn.Module, test_loader: DataLoader, num_categories: in
         pred = pred.flatten(start_dim=1)
         # take the max probability among the classes predicted
         _, pred = torch.max(pred, 1)
-        y_pred.append(pred.numpy())
-        y_target.append(y.numpy())
+        y_pred.append(pred.cpu().numpy())
+        y_target.append(y.cpu().numpy())
 
     y_pred = np.concatenate(y_pred)
     y_target = np.concatenate(y_target)
@@ -962,7 +960,7 @@ def validate_saved_model(model_name: str, dataloader: DataLoader) -> float:
     return accuracy
 
 def load_calibration_indices(file_path):
-    """Loadindices from a calibration indices file."""
+    """Load indices from a calibration indices file."""
     with open(file_path, "r") as f:
         indices = [int(line.strip()) for line in f if line.strip().isdigit()]
     return indices
@@ -976,9 +974,7 @@ if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0,1,2,3,4,5,6,7,8,9,10,11]
-    NUM_EPOCHS = 36#10 acc was 92.2
-    WINDOW_LENGTH = 1024
-    WINDOW_OFFSET = WINDOW_LENGTH//4  # WINDOW_LENGTH//2
+    NUM_EPOCHS = 36
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
@@ -986,7 +982,7 @@ if __name__ == '__main__':
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #True, #False
     NUM_CATEGORIES = 12  
-
+    BATCH_SIZE = 1024
     assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
         'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
     
@@ -999,13 +995,13 @@ if __name__ == '__main__':
     save_dir = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
     train_loader = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
     test_loader = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
-    test_loader = DataLoader(test_loader, batch_size=256, shuffle=False, drop_last=True)
-    train_loader = DataLoader(train_loader, batch_size=256, shuffle=True, num_workers=0)
+    train_loader = DataLoader(train_loader, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    test_loader = DataLoader(test_loader, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
     
     calibration_indices_file = r"quant_cal_indices_mlperf.txt"  # Path to calibration indices
 
    # Load calibration indices
-    calibration_indices = load_calibration_indices(calibration_indices_file)
+    calibration_indices = load_calibration_indices(calibration_indices_file) 
     print(f"Loaded {len(calibration_indices)} indices for calibration.")
     validation_dataset = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"val"))
     calibration_dataset = create_calibration_dataset(validation_dataset, calibration_indices)
@@ -1019,7 +1015,7 @@ if __name__ == '__main__':
     #Import model structure
     nn_model = DSCNN()
   
-    nn_model = nn_model.to("cpu")
+    nn_model = nn_model.to(DEVICE)
     
     #Train and Validate fp32 model
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
