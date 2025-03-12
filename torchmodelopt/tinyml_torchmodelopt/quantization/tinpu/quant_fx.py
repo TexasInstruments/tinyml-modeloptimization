@@ -143,7 +143,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             # LinearRelu Module
             ([torch.ao.nn.intrinsic.quantized.modules.linear_relu.LinearReLU], replacement_utils.from_qlinear_relu),
             ([torch.ao.nn.quantized.modules.linear.Linear], replacement_utils.from_qlinear),
-            ([torch.ops.quantized.matmul], replacement_utils.from_qlinear),
+            # ([torch.ops.quantized.matmul], replacement_utils.from_matmul),
             # Leftover Modules
             ([torch.quantize_per_tensor], replacement_utils.from_q),
         ]

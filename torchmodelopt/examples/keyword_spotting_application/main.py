@@ -251,7 +251,6 @@ class AudioPreprocessor(object):
         return mfccs
     
     def add_bgNoise(self, audio_tensor):
-        print("printing background data length", len(self.background_data))
         background_index = np.random.randint(len(self.background_data))
         background_samples = self.background_data[background_index]
         background_offset = np.random.randint(0, len(background_samples) - self.n_audio)
@@ -634,8 +633,6 @@ def train(dataloader, model, loss_fn, optimizer, scheduler):
     # Compute final epoch loss & accuracy
     avg_loss = total_loss / len(dataloader)
     avg_acc = running_corrects / total_samples  # Overall epoch accuracy
-    if scheduler:
-        scheduler.step()
     print(f" Epoch Finished - Avg Loss: {avg_loss:.4f}, Avg Accuracy: {avg_acc:.4f}")
 
     return avg_loss, avg_acc, model, loss_fn, optimizer
@@ -646,7 +643,7 @@ def train_model(model, train_loader, total_epochs, learning_rate):
     """
     loss_fn = nn.CrossEntropyLoss()
     optimizer = optim.SGD(params=model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_epochs)
 
     for epoch in range(total_epochs):
         print(f"\n🚀 Epoch {epoch + 1}/{total_epochs}")
@@ -656,7 +653,7 @@ def train_model(model, train_loader, total_epochs, learning_rate):
         scheduler.step()
         last_lr = scheduler.get_last_lr()[0]
 
-        print(f"📌 Epoch {epoch+1} - Loss: {loss:.5f} - Accuracy: {acc:.4f}")
+        print(f"📌 Epoch {epoch+1} - Loss: {loss:.5f} - Accuracy: {acc:.4f} - LR: {last_lr:.4f}")
 
     return model
 # Validation & Testing Function
@@ -1004,15 +1001,14 @@ if __name__ == '__main__':
     print(f"Loaded {len(calibration_indices)} indices for calibration.")
     validation_dataset = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"val"))
     calibration_dataset = create_calibration_dataset(validation_dataset, calibration_indices)
-    calibration_loader = DataLoader(dataset=calibration_dataset, batch_size=256, shuffle=False)
+    calibration_loader = DataLoader(dataset=calibration_dataset, batch_size=BATCH_SIZE, shuffle=False)
     
     example_batch = next(iter(test_loader))
-
-
     example_input = example_batch["audio"].float()  # Add channel dimension
  
     #Import model structure
     nn_model = DSCNN()
+    # nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
   
     nn_model = nn_model.to(DEVICE)
     

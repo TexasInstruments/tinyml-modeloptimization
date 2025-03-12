@@ -346,6 +346,34 @@ class TINPUQuantizedReplacementUtils():
         self.from_qlinear(start, end, with_relu=True)
         return None
 
+    def get_weights_from_initializer(self, start: Node):
+        initializer_node = start.args[0]
+        target, attribute = initializer_node.target.split('.')
+
+        weights = getattr(self._get_named_modules()[target], attribute)
+        scale = torch.tensor([getattr(self.module, start.args[1].target)]) * torch.ones(weights.shape[1])
+        z_point = torch.tensor([getattr(self.module, start.args[2].target)]) * torch.zeros(weights.shape[1])
+        print("matmul under construction :)")
+        exit()
+        weights = torch.quantize_per_channel(weights, scale, z_point, 1, torch.qint32)
+
+        return weights
+
+    def from_matmul(self, start: Node, end: Node):
+        # MatMul Module
+        input_1 = start.args[0]
+        weights = self.get_weights_from_initializer(start.args[1])
+
+        scale, zero_point = self.get_q_params(start, using='prev')
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=self.num_bits_scale)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
+        
+        linear_module = torch.nn.Linear(input_1, weights)
+        seq_module = torch.nn.Sequential(linear_module, oss_module)
+        
+        replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
+        return None
+    
     # Replacement Rules for Flatten
     def from_flatten(self, start: Node, end: Node):
         named_modules = self._get_named_modules()
