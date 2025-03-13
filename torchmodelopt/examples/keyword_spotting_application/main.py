@@ -29,7 +29,8 @@ from tqdm import tqdm
 import tensorflow as tf
 import torch.optim as optim
 import hashlib
-
+import requests
+import tarfile
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 #DEVICE='cpu'
@@ -393,14 +394,56 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
             continue
         elif filename == "running_tap.wav":
             val_samples += process_audio_file(filepath, "silence", os.path.join(val_dir, "_silence_"))
-        elif filename == "doing_the_dishes.wav":
-            test_samples += process_audio_file(filepath, "silence", os.path.join(test_dir, "_silence_"))
         else:
             train_samples += process_audio_file(filepath, "silence", os.path.join(train_dir, "_silence_"))
     print(f"Train dataset samples = {train_samples}")
-    print(f"Test dataset samples = {test_samples}")
+   # print(f"Test dataset samples = {test_samples}")
     print(f"Val dataset samples = {val_samples}")
 
+    shutil.rmtree(test_dir)
+    os.environ["http_proxy"] = "http://wwwinproxy.itg.ti.com:80" #for donwloading dataset over our Internal TI Network, customer can comment this 
+    balanced_mlperf_test_url= "http://download.tensorflow.org/data/speech_commands_test_set_v0.02.tar.gz"
+
+    download_path=os.path.join(root,"SpeechCommands","Google_vcdataset.tar.gz")
+    extract_path=os.path.join(root,"SpeechCommands","test") 
+    destination_path = os.path.join(root,"SpeechCommands", "google_vcdataset") 
+
+
+    # Step 1: Download the tar.gz file
+    print("Downloading file...")
+    response = requests.get(balanced_mlperf_test_url, stream=True)
+    if response.status_code == 200:
+     with open(download_path, "wb") as file:
+        for chunk in response.iter_content(chunk_size=1024):
+            file.write(chunk)
+     print("Download complete.")
+    else:
+     print("Failed to download the file.")
+     exit(1)
+
+# Step 2: Extract the tar.gz file
+    print("Extracting the file...")
+    with tarfile.open(download_path, "r:gz") as tar:
+     tar.extractall(extract_path)
+    print("Extraction complete.")
+
+# Step 3: Move the entire 'test/' folder into 'google_vcdataset/'
+    final_destination = os.path.join(destination_path, "test")
+
+# Ensure the destination directory exists
+    os.makedirs(destination_path, exist_ok=True)
+
+# Move the entire 'test/' folder into 'google_vcdataset/' instead of just its contents   
+    if not os.path.exists(final_destination):
+     shutil.move(extract_path, final_destination)
+     print(f"Successfully moved 'test/' folder to '{final_destination}'")
+    else: 
+     print(f"'test/' folder already exists in '{destination_path}'. Skipping move.")
+
+# Cleanup: Remove the downloaded .tar.gz file   
+    os.remove(download_path)
+
+    print("Process completed successfully.")
     # Preprocess and save as .pt tensors
     print("Preparing Saved TensorDataset....")
     dataset_dir = os.path.join(root, "SpeechCommands", "google_vcdataset")
