@@ -346,32 +346,40 @@ class TINPUQuantizedReplacementUtils():
         self.from_qlinear(start, end, with_relu=True)
         return None
 
-    def get_weights_from_initializer(self, start: Node):
+    def get_values_from_initializer(self, start: Node) -> torch.Tensor:
         initializer_node = start.args[0]
         target, attribute = initializer_node.target.split('.')
-
-        weights = getattr(self._get_named_modules()[target], attribute)
-        scale = torch.tensor([getattr(self.module, start.args[1].target)]) * torch.ones(weights.shape[1])
-        z_point = torch.tensor([getattr(self.module, start.args[2].target)]) * torch.zeros(weights.shape[1])
-        print("matmul under construction :)")
-        exit()
-        weights = torch.quantize_per_channel(weights, scale, z_point, 1, torch.qint32)
-
+        # get the weights, scale and zero point from initializer
+        weights: torch.Tensor = getattr(self._get_named_modules()[target], attribute)
+        scale = torch.tensor([getattr(self.module, start.args[1].target)])
+        z_point = torch.tensor([getattr(self.module, start.args[2].target)])
+        # quantize the tensor
+        weights = weights/scale + z_point
+        weights = weights.data.detach()
+        weights = weights.type(torch.uint8)
         return weights
 
     def from_matmul(self, start: Node, end: Node):
-        # MatMul Module
-        input_1 = start.args[0]
-        weights = self.get_weights_from_initializer(start.args[1])
+        if list(start.users).__len__() == 0:
+            return None
+        matmul_node = list(start.users)[0]
+        add_node = list(matmul_node.users)[0]
+        # Get the weights of linear layer
+        weights = self.get_values_from_initializer(matmul_node.args[1])
+        in_features, out_features = weights.shape[0], weights.shape[1]
+        matmul_node.args = matmul_node.args[0], matmul_node.args[2], matmul_node.args[3]
+        # Prepare the linear layer to be replaced with matmul
+        linear_module = torch.nn.Linear(in_features, out_features, bias=False)
+        linear_module.weight.data.copy_(weights.T)
 
-        scale, zero_point = self.get_q_params(start, using='prev')
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=self.num_bits_scale)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
-        
-        linear_module = torch.nn.Linear(input_1, weights)
-        seq_module = torch.nn.Sequential(linear_module, oss_module)
-        
-        replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
+        biases = self.get_values_from_initializer(add_node.args[1])
+        add_node.args = add_node.args[0], add_node.args[2], add_node.args[3]
+        add_relu_block = AddReLUWithBlock(biases, 0, 2**self.activation_bw - 1, torch.tensor([1]), torch.tensor([0.0]), False, num_bits_scale=self.num_bits_scale)
+
+        # replace matmul node with linear layer, add layer
+        seq_module = torch.nn.Sequential(linear_module, add_relu_block)
+        replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())
+        # remove_hanging_nodes(self.module)
         return None
     
     # Replacement Rules for Flatten
