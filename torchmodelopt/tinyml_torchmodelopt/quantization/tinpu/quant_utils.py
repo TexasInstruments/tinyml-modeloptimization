@@ -354,9 +354,9 @@ class TINPUQuantizedReplacementUtils():
         scale = torch.tensor([getattr(self.module, start.args[1].target)])
         z_point = torch.tensor([getattr(self.module, start.args[2].target)])
         # quantize the tensor
-        weights = weights/scale + z_point
+        weights = weights/scale
         weights = weights.data.detach()
-        weights = weights.type(torch.uint8)
+        weights = weights.type(torch.int8)
         return weights
 
     def from_matmul(self, start: Node, end: Node):
@@ -370,7 +370,8 @@ class TINPUQuantizedReplacementUtils():
         matmul_node.args = matmul_node.args[0], matmul_node.args[2], matmul_node.args[3]
         # Prepare the linear layer to be replaced with matmul
         linear_module = torch.nn.Linear(in_features, out_features, bias=False)
-        linear_module.weight.data.copy_(weights.T)
+        weights = weights.transpose(1, 0)
+        linear_module.weight.data.copy_(weights)
 
         biases = self.get_values_from_initializer(add_node.args[1])
         add_node.args = add_node.args[0], add_node.args[2], add_node.args[3]

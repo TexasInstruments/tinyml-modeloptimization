@@ -78,8 +78,8 @@ class AddReLUWithBlock(torch.nn.Module):
         self.clip = torch.nn.Hardtanh(min_relu_clip, max_relu_clip)
 
     def forward(self, y):
-        out = self.bias + y
-        y = self.oss(out)
+        y = self.bias + y
+        # y = self.oss(out)
         if self.with_relu:
             y = self.relu(y)
             y = self.clip(y)

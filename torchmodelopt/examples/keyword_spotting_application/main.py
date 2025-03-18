@@ -1013,7 +1013,7 @@ if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    NUM_EPOCHS = 36
+    NUM_EPOCHS = 2
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
@@ -1051,20 +1051,21 @@ if __name__ == '__main__':
  
     #Import model structure
     nn_model = DSCNN()
-    # nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
+    nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
   
     nn_model = nn_model.to(DEVICE)
     
     #Train and Validate fp32 model
-    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    # nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
     print("OG model accuracy is", accuracy)
+    export_model(nn_model, example_input, MODEL_NAME, with_quant=False)
     
   
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
 
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 1)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,quantization_device_type=QUANTIZATION_DEVICE_TYPE)
       
         if QUANTIZATION_METHOD == 'QAT':
@@ -1078,6 +1079,7 @@ if __name__ == '__main__':
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
 
+        export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
         
