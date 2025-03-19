@@ -162,13 +162,13 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
     def freeze(self, freeze_bn=True, freeze_observers=True):
         if freeze_observers is True:
             self.apply(torch.ao.quantization.disable_observer)
-            quant_utils.print_once('Freezing ranges for subsequent epochs')
+            # quant_utils.print_once('Freezing ranges for subsequent epochs')
         elif freeze_observers is False:
             self.apply(torch.ao.quantization.enable_observer)
         #
         if freeze_bn is True:
             self.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
-            quant_utils.print_once('Freezing BN for subsequent epochs')
+            # quant_utils.print_once('Freezing BN for subsequent epochs')
         elif freeze_bn is False:
             self.apply(torch.nn.intrinsic.qat.update_bn_stats)
         #
@@ -204,7 +204,6 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             model = self.convert(self, device=device, model_qconfig_format=model_qconfig_format, make_copy=make_copy)
         else:
             model = self.module
-            warnings.warn("model has already been converted before calling export. make sure it is done correctly.")
 
         if model_qconfig_format == common.TinyMLModelQConfigFormat.INT_MODEL:
             # # Convert QDQ format to Int8 format
