@@ -1,13 +1,15 @@
 # torch imports
 import torch
+import torch.backends.cudnn as cudnn
 from torch.ao.quantization import quantize_fx
 import torch.utils
 import torch.nn as nn
 import torch.utils.data
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 import os
 import shutil
 import re
+import random
 import torchaudio
 from scipy.io import wavfile
 from pydub import AudioSegment
@@ -305,10 +307,7 @@ class GoogleSpeechDatasetGenerator(object):
         pass
 
 def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
-    # Set seeds
-    torch.manual_seed(seed)
-    np.random.seed(seed)  
-    os.environ['PYTHONHASHSEED'] = str(seed)
+
 
     # Download Dataset
     if os.path.exists(os.path.join(root, "SpeechCommands")) and not force:
@@ -671,12 +670,12 @@ def train(dataloader, model, loss_fn, optimizer, scheduler):
 
         # Print running accuracy every 10 batches
         if batch_idx % 10 == 0:
-            print(f"🟢 Batch {batch_idx}/{len(dataloader)} - Loss: {loss.item():.4f}, Running Accuracy: {batch_acc:.4f}")
+            print(f"🟢 Batch {batch_idx}/{len(dataloader)} - Loss: {loss.item():.4f}, Running Train Accuracy: {batch_acc:.4f}")
 
     # Compute final epoch loss & accuracy
     avg_loss = total_loss / len(dataloader)
     avg_acc = running_corrects / total_samples  # Overall epoch accuracy
-    print(f" Epoch Finished - Avg Loss: {avg_loss:.4f}, Avg Accuracy: {avg_acc:.4f}")
+    print(f" Epoch Finished - Avg Loss: {avg_loss:.4f}, Avg Train Accuracy: {avg_acc:.4f}")
 
     return avg_loss, avg_acc, model, loss_fn, optimizer
 
@@ -696,7 +695,7 @@ def train_model(model, train_loader, total_epochs, learning_rate):
         scheduler.step()
         last_lr = scheduler.get_last_lr()[0]
 
-        print(f"📌 Epoch {epoch+1} - Loss: {loss:.5f} - Accuracy: {acc:.4f} - LR: {last_lr:.4f}")
+        print(f"📌 Epoch {epoch+1} - Loss: {loss:.5f} - Train Accuracy: {acc:.4f} - LR: {last_lr:.4f}")
 
     return model
 # Validation & Testing Function
@@ -1009,33 +1008,50 @@ def create_calibration_dataset(dataset, indices):
     from torch.utils.data import Subset
     return Subset(dataset, indices)
 
+def set_seed(SEED):
+        # set seed
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)  
+    torch.cuda.manual_seed_all(SEED)
+    random.seed(SEED)
+    #https://pytorch.org/docs/stable/notes/randomness.html
+    #these flags are for reproducibility
+    cudnn.deterministic = True  
+    cudnn.benchmark = False    
+    os.environ['PYTHONHASHSEED'] = str(SEED)
+
 if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    NUM_EPOCHS = 2
+    NUM_EPOCHS = 36
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
-    NORMALIZE_INPUT = True #True, #False
+    NORMALIZE_INPUT = False #True, #False
     NUM_CATEGORIES = 12  
-    BATCH_SIZE = 1024
+    BATCH_SIZE = 489
+    SEED =42
     assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
         'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
     
-    root="."
+    root = "."
+    set_seed(SEED)
+
 
     #Downloading and preparing the dataset
     prepare_dataset(root) 
 
+    set_seed(SEED)
+
     #Define the dataloaders
     save_dir = os.path.join(root, "SpeechCommands", "tensor_vcdataset")
-    train_loader = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
-    test_loader = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
-    train_loader = DataLoader(train_loader, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-    test_loader = DataLoader(test_loader, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
+    ds_train = SavedTensorDataset(dataset_dir= os.path.join(save_dir,"train"))
+    ds_test = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"test"))
+    train_loader = DataLoader(ds_train, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    test_loader = DataLoader(ds_test, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
     
     calibration_indices_file = r"quant_cal_indices_mlperf.txt"  # Path to calibration indices
 
@@ -1044,42 +1060,40 @@ if __name__ == '__main__':
     print(f"Loaded {len(calibration_indices)} indices for calibration.")
     validation_dataset = SavedTensorDataset(dataset_dir = os.path.join(save_dir,"val"))
     calibration_dataset = create_calibration_dataset(validation_dataset, calibration_indices)
-    calibration_loader = DataLoader(dataset=calibration_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    calibration_loader = DataLoader(dataset=calibration_dataset, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
     
     example_batch = next(iter(test_loader))
-    example_input = example_batch["audio"].float()  # Add channel dimension
+    example_input = example_batch["audio"].float().to(DEVICE)  # Add channel dimension
  
     #Import model structure
     nn_model = DSCNN()
-    nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
+    # nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
   
     nn_model = nn_model.to(DEVICE)
     
     #Train and Validate fp32 model
-    # nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
     print("OG model accuracy is", accuracy)
-    export_model(nn_model, example_input, MODEL_NAME, with_quant=False)
     
   
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
 
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 1)
+        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,quantization_device_type=QUANTIZATION_DEVICE_TYPE)
       
         if QUANTIZATION_METHOD == 'QAT':
-            quant_learning_rate = (LEARNING_RATE/100) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
+            quant_learning_rate = (LEARNING_RATE/100) #if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
          
             quant_model = train_model(quant_model, train_loader, quant_epochs, quant_learning_rate)
        
         elif QUANTIZATION_METHOD == 'PTQ':
-            quant_model = calibrate_model(quant_model, calibration_loader, quant_epochs)
+            quant_model = calibrate_model(quant_model, calibration_loader, 2)
         
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"QAT Model Accuracy: {round(accuracy, 5)}\n")
 
-        export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
         
@@ -1088,4 +1102,10 @@ if __name__ == '__main__':
     
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
+
+    random_indices = random.sample(range(len(ds_test)), 1000)
+    ds_test_subset = Subset(ds_test, random_indices)
+    ds_test_loader = DataLoader(dataset=ds_test_subset, batch_size=100, shuffle=False, drop_last=False)
+    accuracy = validate_saved_model(MODEL_NAME, ds_test_loader)
+    print(f"Exported ONNX Quant Model Accuracy on 1000 samples: {accuracy}")
   
