@@ -87,7 +87,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
 
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
-        self.module = adjust_residual_inputs_qconfig(self.module, 2, -511, 511)
+        self.module = adjust_residual_inputs_qconfig(self.module)
 
     def convert(self, *args, model_qconfig_format=TinyMLModelQConfigFormat.TINPU_INT_MODEL, output_dequantize=False, **kwargs):
         # first convert the model to int

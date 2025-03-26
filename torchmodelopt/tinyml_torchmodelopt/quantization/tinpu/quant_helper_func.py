@@ -357,7 +357,7 @@ def set_quant_range(model: GraphModule, node: Node, target_name: str, quant_min:
             setattr(model, str(node), f)
     return None
 
-def adjust_residual_inputs_qconfig(model : GraphModule, range_max: int=4, quant_min: int=-255, quant_max: int=255) -> GraphModule:
+def adjust_residual_inputs_qconfig(model : GraphModule, range_max: int=0, quant_min: int=torch.inf, quant_max: int=torch.inf) -> GraphModule:
     """
     Modify the QConfig inputs of add and concat operators to enforce the same quantization scale
     factors.
@@ -370,8 +370,10 @@ def adjust_residual_inputs_qconfig(model : GraphModule, range_max: int=4, quant_
         for n_child in node.users:
             target_name = n_child.target
             if target_name in residual_operators:
-                add_activation_to_node(model, node, range_max)
-                set_quant_range(model, node, target_name, quant_min, quant_max)
+                if range_max != 0:
+                    add_activation_to_node(model, node, range_max)
+                if quant_min != torch.inf and quant_max != torch.inf:
+                    set_quant_range(model, node, target_name, quant_min, quant_max)
     model.graph.lint()
     model.recompile()
     return model
