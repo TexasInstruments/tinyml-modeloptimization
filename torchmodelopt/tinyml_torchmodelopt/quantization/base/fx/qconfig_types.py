@@ -33,7 +33,7 @@
 import torch
 from torch.ao.quantization import QConfig, QConfigMapping
 
-from .observer_types import *
+from . import observer_types
 
 
 def get_default_qconfig(qconfig_dict=None):
@@ -51,6 +51,8 @@ def get_default_qconfig(qconfig_dict=None):
     weight_power2_scale = weight_qconfig.get('power2_scale', True)
     weight_range_max = weight_qconfig.get('range_max', None)
     weight_fixed_range = weight_qconfig.get('fixed_range', False)
+    weight_histogram_range = weight_qconfig.get('histogram_range', False)
+    weight_fast_mode = weight_qconfig.get('fast_mode', False)
 
     activation_qconfig = qconfig_dict.get('activation', dict())
     activation_dtype = activation_qconfig.get('dtype', torch.quint8)
@@ -61,16 +63,37 @@ def get_default_qconfig(qconfig_dict=None):
     activation_power2_scale = activation_qconfig.get('power2_scale', True)
     activation_range_max = activation_qconfig.get('range_max', None)
     activation_fixed_range = activation_qconfig.get('fixed_range', False)
+    activation_histogram_range = activation_qconfig.get('histogram_range', False)
+    activation_fast_mode = activation_qconfig.get('fast_mode', False)
+    bias_calibration_factor = activation_qconfig.get('bias_calibration_factor', 0.0)
 
+    if weight_qscheme == torch.per_channel_symmetric:
+        # we don't have a historgram observer tht can do per_channel_symmetric - so use minmax
+        weight_observer_base_class = torch.ao.quantization.PerChannelMinMaxObserver
+    elif weight_histogram_range:
+        weight_observer_base_class = observer_types.MovingAverageRangeShrinkFastHistogramObserver \
+                    if weight_fast_mode else torch.ao.quantization.HistogramObserver
+    else:
+        weight_observer_base_class = torch.ao.quantization.MinMaxObserver
+    #
     weight_fake_quant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(
-        observer=SimplePerChannelWeightObserver, quant_min=weight_quant_min, quant_max=weight_quant_max,
+        observer=observer_types.get_weight_observer_type(base_class=weight_observer_base_class),
+        quant_min=weight_quant_min, quant_max=weight_quant_max,
         qscheme=weight_qscheme, dtype=weight_dtype, power2_scale=weight_power2_scale,
         range_max=weight_range_max, fixed_range=weight_fixed_range)
 
+    if activation_histogram_range:
+        activation_observer_base_class = observer_types.MovingAverageRangeShrinkFastHistogramObserver \
+            if activation_fast_mode else torch.ao.quantization.HistogramObserver
+    else:
+        activation_observer_base_class = torch.ao.quantization.MovingAverageMinMaxObserver
+    #
     activation_fake_quant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(
-        observer=SimpleActivationObserver, quant_min=activation_quant_min, quant_max=activation_quant_max,
+        observer=observer_types.get_activation_observer_type(base_class=activation_observer_base_class),
+        quant_min=activation_quant_min, quant_max=activation_quant_max,
         qscheme=activation_qscheme, dtype=activation_dtype, power2_scale=activation_power2_scale,
-        range_max=activation_range_max, fixed_range=activation_fixed_range)
+        range_max=activation_range_max, fixed_range=activation_fixed_range,
+        bias_calibration_factor=bias_calibration_factor)
 
     qconfig = QConfig(weight=weight_fake_quant, activation=activation_fake_quant)
     return qconfig

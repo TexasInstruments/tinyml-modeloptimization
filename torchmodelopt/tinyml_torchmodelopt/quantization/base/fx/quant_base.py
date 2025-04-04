@@ -40,6 +40,7 @@ from torch.ao.quantization import QConfigMapping
 from ... import common
 from . import qconfig_types
 from . import quant_utils
+from . import bias_calibration
 
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
@@ -118,11 +119,24 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         self.num_observer_update_epochs = num_observer_update_epochs
         self.num_epochs_tracked = 0
         self.total_epochs = total_epochs
+        self.bias_calibration_hooks = []
         # set the quantization backend - qnnpack, fbgemm, x86, onednn etc.
         self.set_quant_backend(backend)
+
         # related to adaptive quantization
+        self.bias_calibration_factor = 0.1
+
         if not self.is_qat:
             self.disable_backward_for_ptq()
+            # find the bias calibration factor from observer - to be used as a flag.
+            for m in self.module.modules():
+                if isinstance(m, torch.ao.quantization.ObserverBase):
+                    if hasattr(m, 'bias_calibration_factor'):
+                        self.bias_calibration_factor = max(self.bias_calibration_factor, m.bias_calibration_factor)
+                        m.bias_calibration_factor = self.bias_calibration_factor
+                    #
+                #
+            #
         #
         if not verbose:
             quant_utils.print_once_dict = {'Freezing BN for subsequent epochs': None,
@@ -157,8 +171,14 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             freeze_observers = enable_freeze_observer and ((self.num_epochs_tracked >= num_observer_update_epochs))
             self.freeze(freeze_bn=freeze_bn, freeze_observers=freeze_observers)
             self.num_epochs_tracked += 1
+            if (not self.is_qat) and self.bias_calibration_factor:
+                self.bias_calibration_hooks = bias_calibration.insert_bias_calibration_hooks(self.module)
+            #
         else:
             self.freeze()
+            if (not self.is_qat) and self.bias_calibration_factor:
+                self.bias_calibration_hooks = bias_calibration.remove_hooks(self.module, self.bias_calibration_hooks)
+            #
         #
         return self
 
