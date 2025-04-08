@@ -45,7 +45,7 @@ from . import bias_calibration
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
-                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=None, prepare_qdq=True, verbose=True):
+                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=False, prepare_qdq=True, bias_calibration_factor=0.0, verbose=True):
         '''
         Parameters:
             model: input model to be quantized
@@ -124,7 +124,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         self.set_quant_backend(backend)
 
         # related to adaptive quantization
-        self.bias_calibration_factor = 0.1
+        self.bias_calibration_factor = bias_calibration_factor
 
         if not self.is_qat:
             self.disable_backward_for_ptq()
@@ -172,7 +172,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             self.freeze(freeze_bn=freeze_bn, freeze_observers=freeze_observers)
             self.num_epochs_tracked += 1
             if (not self.is_qat) and self.bias_calibration_factor:
-                self.bias_calibration_hooks = bias_calibration.insert_bias_calibration_hooks(self.module)
+                self.bias_calibration_hooks = bias_calibration.insert_bias_calibration_hooks(self.module, self.total_epochs, self.num_epochs_tracked)
             #
         else:
             self.freeze()

@@ -58,7 +58,9 @@ def _bias_calibration_hook(m, x, y, bias_calibration_factor, bias_module):
     return y
 
 
-def _add_bias_calibration_hook(model):
+def _add_bias_calibration_hook(model, total_epochs, num_epochs_tracked):
+    epoch_fraction = num_epochs_tracked / total_epochs
+    bias_calibration_fraction = (0.1 if (epoch_fraction <= 0.25 or epoch_fraction >= 0.75) else 1.0)
     all_modules = dict(model.named_modules())
     all_hooks = []
     for node in model.graph.nodes:
@@ -72,7 +74,7 @@ def _add_bias_calibration_hook(model):
                     fake_quantize_module = all_modules[node.target]
                     observer_module = fake_quantize_module.activation_post_process
                     bias_calibration_factor = observer_module.bias_calibration_factor
-                    _bias_calibration_hook_bind = partial(_bias_calibration_hook, bias_calibration_factor=bias_calibration_factor, bias_module=bias_module)
+                    _bias_calibration_hook_bind = partial(_bias_calibration_hook, bias_calibration_factor=bias_calibration_factor*bias_calibration_fraction, bias_module=bias_module)
                     this_hook = fake_quantize_module.register_forward_hook(_bias_calibration_hook_bind)
                     all_hooks.append(this_hook)
                 #
@@ -82,9 +84,9 @@ def _add_bias_calibration_hook(model):
     return all_hooks
 
 
-def insert_bias_calibration_hooks(model):
+def insert_bias_calibration_hooks(model, total_epochs, num_epochs_tracked):
     bias_hooks = []
-    bias_hooks += _add_bias_calibration_hook(model)
+    bias_hooks += _add_bias_calibration_hook(model, total_epochs, num_epochs_tracked)
     return bias_hooks
 
 

@@ -52,7 +52,6 @@ def get_default_qconfig(qconfig_dict=None):
     weight_range_max = weight_qconfig.get('range_max', None)
     weight_fixed_range = weight_qconfig.get('fixed_range', False)
     weight_histogram_range = weight_qconfig.get('histogram_range', False)
-    weight_fast_mode = weight_qconfig.get('fast_mode', False)
 
     activation_qconfig = qconfig_dict.get('activation', dict())
     activation_dtype = activation_qconfig.get('dtype', torch.quint8)
@@ -64,7 +63,6 @@ def get_default_qconfig(qconfig_dict=None):
     activation_range_max = activation_qconfig.get('range_max', None)
     activation_fixed_range = activation_qconfig.get('fixed_range', False)
     activation_histogram_range = activation_qconfig.get('histogram_range', False)
-    activation_fast_mode = activation_qconfig.get('fast_mode', False)
     bias_calibration_factor = activation_qconfig.get('bias_calibration_factor', 0.0)
 
     if weight_qscheme == torch.per_channel_symmetric:
@@ -72,7 +70,7 @@ def get_default_qconfig(qconfig_dict=None):
         weight_observer_base_class = torch.ao.quantization.PerChannelMinMaxObserver
     elif weight_histogram_range:
         weight_observer_base_class = observer_types.MovingAverageRangeShrinkFastHistogramObserver \
-                    if weight_fast_mode else torch.ao.quantization.HistogramObserver
+                    if weight_histogram_range == 1 else torch.ao.quantization.HistogramObserver
     else:
         weight_observer_base_class = torch.ao.quantization.MinMaxObserver
     #
@@ -84,7 +82,7 @@ def get_default_qconfig(qconfig_dict=None):
 
     if activation_histogram_range:
         activation_observer_base_class = observer_types.MovingAverageRangeShrinkFastHistogramObserver \
-            if activation_fast_mode else torch.ao.quantization.HistogramObserver
+            if activation_histogram_range==1 else torch.ao.quantization.HistogramObserver
     else:
         activation_observer_base_class = torch.ao.quantization.MovingAverageMinMaxObserver
     #
