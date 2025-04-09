@@ -239,7 +239,7 @@ class AudioPreprocessor(object):
         return mfccs
     
     def compute_torchMFCC(self, audio_tensor):
-        __MFCC = T.MFCC(
+        __MFCC = T.MFCC( # type: ignore
             sample_rate=self.sr,
             n_mfcc=self.n_mfcc,
             melkwargs={
@@ -1024,9 +1024,9 @@ if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    NUM_EPOCHS = 36
+    NUM_EPOCHS = 15
     LEARNING_RATE = 0.5
-    QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
+    QUANTIZATION_METHOD = 'PTQ' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
@@ -1068,7 +1068,7 @@ if __name__ == '__main__':
     #Import model structure
     # nn_model = DSCNN()
     accuracies = []
-    bias_calibration_factors = [0.05] #np.linspace(0.01, 0.1, num=10)  # Example bias calibration factors
+    bias_calibration_factors = [0.0] #np.linspace(0.01, 0.1, num=20)  # Example bias calibration factors
     for bias_calibration_factor in bias_calibration_factors:
         nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
     
@@ -1096,7 +1096,8 @@ if __name__ == '__main__':
             
             accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
             print(f"{QUANTIZATION_METHOD} Model Accuracy: {round(accuracy, 5)}\n")
-            # export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
+            if WEIGHT_BITWIDTH == 8:
+                export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
             quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
             
@@ -1114,3 +1115,9 @@ if __name__ == '__main__':
         accuracies.append(accuracy)
     print(accuracies)
     print(bias_calibration_factors)
+
+    import os
+    l = os.listdir()
+    for file in l:
+        if file.endswith('.onnx') and True:
+            os.remove(file)

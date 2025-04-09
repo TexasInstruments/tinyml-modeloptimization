@@ -363,7 +363,8 @@ class TINPUQuantizedReplacementUtils():
         # Get the weights of linear layer
         weights, weight_scale, weight_zero_point = self.get_values_from_initializer(matmul_node.args[1])
         weights = weights / weight_scale
-        scale = getattr(self.module, matmul_node.args[2].target)
+        weight_zero_point = torch.tensor([weight_zero_point]*(weights.shape[1]))
+        module_scale = getattr(self.module, matmul_node.args[2].target)
 
         weights = weights.data.detach()
         weights = weights.type(torch.int8)
@@ -373,23 +374,24 @@ class TINPUQuantizedReplacementUtils():
         linear_module = torch.nn.Linear(in_features, out_features, bias=False)
         weights = weights.transpose(1, 0)
         linear_module.weight.data.copy_(weights)
+        
+        relative_mult = weight_scale * module_scale
 
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(weight_zero_point*0.0, 1/weight_scale, num_bits_scale=self.num_bits_scale)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
-       
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(weight_zero_point, relative_mult, num_bits_scale=self.num_bits_scale)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw) + 1, 2**(self.activation_bw) - 1, ndim=2, dim=1)
+
         biases, bias_scale, bias_zero_point = self.get_values_from_initializer(add_node.args[1])
-        biases = biases.data.detach() / bias_scale
-        biases = biases 
+        scale = getattr(self.module, add_node.args[2].target)
+        biases = biases.data.detach()  / scale 
         qbias = biases.type(torch.int32)
 
-        scale = getattr(self.module, add_node.args[2].target)
-        relative_mult = (bias_scale * scale).float()
-
-        add_node.args = add_node.args[0], add_node.args[2], add_node.args[3]
-        add_relu_block = AddReLUWithBias(qbias, 0, 2**self.activation_bw - 1, relative_mult, qbias, False, num_bits_scale=self.num_bits_scale)
+        relative_mult = scale
+        
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult, num_bits_scale=self.num_bits_scale)
+        oss_module_2 = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw) + 1, 2**(self.activation_bw) - 1, ndim=2, dim=1)
 
         # replace matmul node with linear layer, add layer
-        seq_module = torch.nn.Sequential(linear_module, oss_module, add_relu_block)
+        seq_module = torch.nn.Sequential(linear_module, oss_module, oss_module_2)
         replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())
         return None
     
