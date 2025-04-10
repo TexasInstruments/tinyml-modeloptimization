@@ -536,33 +536,41 @@ class DSCNN(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu1(x)
+
         x = self.dropout1(x)
 
         # Depthwise separable convolutions
         x = self.depthwise2(x)
         x = self.bn21(x)
         x = self.relu21(x)
+
         x = self.pointwise2(x)
         x = self.bn22(x)
         x = self.relu22(x)
 
+        # Depthwise separable convolutions
         x = self.depthwise3(x)
         x = self.bn31(x)
         x = self.relu31(x)
+
         x = self.pointwise3(x)
         x = self.bn32(x)
         x = self.relu32(x)
 
+        # Depthwise separable convolutions
         x = self.depthwise4(x)
         x = self.bn41(x)
         x = self.relu41(x)
+
         x = self.pointwise4(x)
         x = self.bn42(x)
         x = self.relu42(x)
 
+        # Depthwise separable convolutions
         x = self.depthwise5(x)
         x = self.bn51(x)
         x = self.relu51(x)
+        
         x = self.pointwise5(x)
         x = self.bn52(x)
         x = self.relu52(x)
@@ -1034,6 +1042,12 @@ if __name__ == '__main__':
     NUM_CATEGORIES = 12  
     BATCH_SIZE = 489
     SEED = 42
+    MODEL_TRAINING = False
+    LOAD_MODEL_FROM_FILE = False
+    LOAD_CHECKPOINT_FROM_FILE = True
+
+    assert not (LOAD_MODEL_FROM_FILE and LOAD_CHECKPOINT_FROM_FILE), 'only one of LOAD_MODEL_FROM_FILE and LOAD_CHECKPOINT_FROM_FILE'
+
     assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
         'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
     
@@ -1064,60 +1078,65 @@ if __name__ == '__main__':
     
     example_batch = next(iter(test_loader))
     example_input = example_batch["audio"].float().to(DEVICE)  # Add channel dimension
- 
+    nn_model = None
+    
     #Import model structure
-    # nn_model = DSCNN()
-    accuracies = []
-    bias_calibration_factors = [0.0] #np.linspace(0.01, 0.1, num=20)  # Example bias calibration factors
-    for bias_calibration_factor in bias_calibration_factors:
-        nn_model = torch.load(os.path.join('trained_models', 'pb2pth_model.pth'))
+    if LOAD_MODEL_FROM_FILE:
+        nn_model = torch.load(os.path.join('trained_models', 'kws_dscnn_pb2pth_model.pth'))
+    else:
+        nn_model = DSCNN().eval()
+
+    if LOAD_CHECKPOINT_FROM_FILE:
+        checkpoint = torch.load(os.path.join('trained_models', 'kws_dscnn_pb2pth_checkpoint.pth'))
+        nn_model.load_state_dict(checkpoint)
+
+    nn_model = nn_model.to(DEVICE)
+
+    #Train and Validate fp32 model
+    if MODEL_TRAINING:
+        nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+
+    accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
+    # export_model(nn_model, example_input, MODEL_NAME, with_quant=False)
+    print("OG model accuracy is", accuracy)
+
+    if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
+
+        MODEL_NAME = 'quant_' + MODEL_NAME
+        quant_epochs = (NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, 
+                                      weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, 
+                                      quantization_method=QUANTIZATION_METHOD, quantization_device_type=QUANTIZATION_DEVICE_TYPE)
     
-        nn_model = nn_model.to(DEVICE)
-
-        #Train and Validate fp32 model
-        # nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
-        accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
-        print("OG model accuracy is", accuracy)
+        if QUANTIZATION_METHOD == 'QAT':
+            quant_learning_rate = (LEARNING_RATE/100) #if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
         
+            quant_model = train_model(quant_model, train_loader, quant_epochs, quant_learning_rate)
     
-        if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
-
-            MODEL_NAME = 'quant_' + MODEL_NAME
-            quant_epochs = (NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
-            quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,quantization_device_type=QUANTIZATION_DEVICE_TYPE, bias_calibration_factor=bias_calibration_factor)
+        elif QUANTIZATION_METHOD == 'PTQ':
+            quant_model = calibrate_model(quant_model, calibration_loader, quant_epochs)
         
-            if QUANTIZATION_METHOD == 'QAT':
-                quant_learning_rate = (LEARNING_RATE/100) #if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
-            
-                quant_model = train_model(quant_model, train_loader, quant_epochs, quant_learning_rate)
-        
-            elif QUANTIZATION_METHOD == 'PTQ':
-                quant_model = calibrate_model(quant_model, calibration_loader, quant_epochs)
-            
-            accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
-            print(f"{QUANTIZATION_METHOD} Model Accuracy: {round(accuracy, 5)}\n")
-            if WEIGHT_BITWIDTH == 8:
-                export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
-            quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
+        accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
+        print(f"{QUANTIZATION_METHOD} Model Accuracy: {round(accuracy, 5)}\n")
+        if WEIGHT_BITWIDTH == 8:
+            export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
+        quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
-            
-        else:
-            print("No Quantization method is specified. Will not do quantization.")
         
-        accuracy = validate_saved_model(MODEL_NAME, test_loader)
-        print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
+    else:
+        print("No Quantization method is specified. Will not do quantization.")
+    
+    accuracy = validate_saved_model(MODEL_NAME, test_loader)
+    print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
 
-        random_indices = random.sample(range(len(ds_test)), 1000)
-        ds_test_subset = Subset(ds_test, random_indices)
-        # ds_test_loader = DataLoader(dataset=ds_test_subset, batch_size=100, shuffle=False, drop_last=False)
-        # accuracy = validate_saved_model(MODEL_NAME, ds_test_loader)
-        print(f"Exported ONNX Quant Model Accuracy on 1000 samples: {accuracy}")
-        accuracies.append(accuracy)
-    print(accuracies)
-    print(bias_calibration_factors)
+    # random_indices = random.sample(range(len(ds_test)), 1000)
+    # ds_test_subset = Subset(ds_test, random_indices)
+    # ds_test_loader = DataLoader(dataset=ds_test_subset, batch_size=100, shuffle=False, drop_last=False)
+    # accuracy = validate_saved_model(MODEL_NAME, ds_test_loader)
+    # print(f"Exported ONNX Quant Model Accuracy on 1000 samples: {accuracy}")
 
     import os
     l = os.listdir()
     for file in l:
-        if file.endswith('.onnx') and True:
+        if file.endswith('.onnx') and False:
             os.remove(file)

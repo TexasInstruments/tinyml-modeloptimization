@@ -9,6 +9,13 @@ class RoundModule(torch.nn.Module):
     def forward(self, x):
         return torch.round(x)
             
+class AddModule(torch.nn.Module):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+    def forward(self, x):
+        return x + self.value
+                
 class MultiplyModule(torch.nn.Module):
     def __init__(self, value):
         super().__init__()

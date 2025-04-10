@@ -377,21 +377,21 @@ class TINPUQuantizedReplacementUtils():
         
         relative_mult = weight_scale * module_scale
 
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(weight_zero_point, relative_mult, num_bits_scale=self.num_bits_scale)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw) + 1, 2**(self.activation_bw) - 1, ndim=2, dim=1)
-
         biases, bias_scale, bias_zero_point = self.get_values_from_initializer(add_node.args[1])
         scale = getattr(self.module, add_node.args[2].target)
-        biases = biases.data.detach()  / scale 
+        biases = biases.data.detach() / scale
         qbias = biases.type(torch.int32)
 
-        relative_mult = scale
+        relative_mult = relative_mult
+
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(weight_zero_point*0.0, relative_mult, num_bits_scale=self.num_bits_scale)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1) + 1, 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
         
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult, num_bits_scale=self.num_bits_scale)
-        oss_module_2 = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw) + 1, 2**(self.activation_bw) - 1, ndim=2, dim=1)
+        add_module = AddModule(qbias)
+        mul_module = MultiplyModule(scale)
 
         # replace matmul node with linear layer, add layer
-        seq_module = torch.nn.Sequential(linear_module, oss_module, oss_module_2)
+        seq_module = torch.nn.Sequential(linear_module, oss_module, add_module, mul_module)
         replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())
         return None
     
