@@ -35,6 +35,42 @@ from torch.ao.quantization import QConfig, QConfigMapping
 
 from . import observer_types
 
+def get_8bit_layers():
+    layers = []
+    # layers += ['conv1', 'bn1', 'relu1']
+
+    # layers += ['pointwise2', 'bn22', 'relu22']
+    # layers += ['pointwise3', 'bn32', 'relu32']
+    # layers += ['pointwise4', 'bn42', 'relu42']
+    # layers += ['pointwise5', 'bn52', 'relu52']
+
+    # layers += ['pointwise2', 'bn21', 'relu21']
+    # layers += ['depthwise3', 'bn31', 'relu31']
+    # layers += ['depthwise4', 'bn41', 'relu41']
+    # layers += ['depthwise5', 'bn51', 'relu51']
+
+    # layers += ['avgpool', 'flatten6']
+    # layers += ['fc6']
+    return layers
+
+def get_4bit_layers():
+    layers = []
+
+    layers += ['conv1', 'bn1', 'relu1']
+
+    layers += ['pointwise2', 'bn22', 'relu22']
+    # layers += ['pointwise3', 'bn32', 'relu32'] # WORST in 4bit
+    # layers += ['pointwise4', 'bn42', 'relu42']
+    layers += ['pointwise5', 'bn52', 'relu52']
+
+    layers += ['depthwise2', 'bn21', 'relu21']
+    layers += ['depthwise3', 'bn31', 'relu31']
+    layers += ['depthwise4', 'bn41', 'relu41']
+    layers += ['depthwise5', 'bn51', 'relu51']
+
+    layers += ['avgpool', 'flatten6']
+    layers += ['fc6']
+    return layers
 
 def get_default_qconfig(qconfig_dict=None):
     '''
@@ -98,12 +134,34 @@ def get_default_qconfig(qconfig_dict=None):
 
 
 def get_default_qconfig_mapping(qconfig_type=None):
-    if isinstance(qconfig_type, dict) or qconfig_type is None:
-        qconfig_type = get_default_qconfig(qconfig_dict=qconfig_type)
+    qconfig_dict = qconfig_type
+    qconfig = {}
+    mixed_precision = qconfig_dict.get('mixed_precision', [])
+    if isinstance(qconfig_dict, dict) or qconfig_dict is None:
+        qconfig_type = get_default_qconfig(qconfig_dict=qconfig_dict)
+        if 8 in mixed_precision:
+            qconfig_dict['weight']['bitwidth'] = 8
+            qconfig[8] = dict()
+            qconfig[8]['qconfig'] = get_default_qconfig(qconfig_dict=qconfig_dict)
+            qconfig[8]['layers'] = get_8bit_layers()
+        if 4 in mixed_precision:
+            qconfig_dict['weight']['bitwidth'] = 4
+            qconfig[4] = dict()
+            qconfig[4]['qconfig'] = get_default_qconfig(qconfig_dict=qconfig_dict)
+            qconfig[4]['layers'] = get_4bit_layers()
+        if 2 in mixed_precision:
+            qconfig_dict['weight']['bitwidth'] = 2
+            qconfig[2] = dict()
+            qconfig[2]['qconfig'] = get_default_qconfig(qconfig_dict=qconfig_dict)
+            qconfig[2]['layers'] = get_4bit_layers()
     #
     if not isinstance(qconfig_type, QConfig):
         raise RuntimeError("Unrecognized type of qconfig_type")
     #
     qconfig_mapping = QConfigMapping().set_global(qconfig_type)
+    for bitwidth in mixed_precision:
+        for layer in qconfig[bitwidth]['layers']:
+            qconfig_mapping.set_module_name(layer, qconfig[bitwidth]['qconfig'])
+    print(qconfig_mapping)
     return qconfig_mapping
     

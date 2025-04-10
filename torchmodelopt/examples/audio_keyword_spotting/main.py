@@ -817,8 +817,10 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'qscheme': torch.per_tensor_symmetric,
                 'power2_scale': True,
                 'range_max': None,
-                'fixed_range': False
-            }
+                'fixed_range': False,
+                'histogram_range': 1
+            },
+            'mixed_precision': [4, 8]
         }
     elif weight_bitwidth == 4:
         qconfig_type = {
@@ -834,8 +836,10 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'qscheme': torch.per_tensor_symmetric,
                 'power2_scale': False,
                 'range_max': None,
-                'fixed_range': False
-            }
+                'fixed_range': False,
+                'histogram_range': 1
+            },
+            'mixed_precision': [4, 8]
         }
     elif weight_bitwidth == 2:
         qconfig_type = {
@@ -853,7 +857,8 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'qscheme': torch.per_tensor_symmetric,
                 'power2_scale': False,
                 'range_max': None,
-                'fixed_range': False
+                'fixed_range': False,
+                'histogram_range': 1
             }
         }
     else:
@@ -920,13 +925,11 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
     # Convert model using FX Graph-based quantization if needed
     if with_quant:
         if hasattr(quant_model, "convert"):
-         
-         print(" Running `convert()` on quant_model...")
-         quant_model = quant_model.convert()
+            print(" Running `convert()` on quant_model...")
+            quant_model = quant_model.convert()
 
         else:
-         
-         quant_model = quantize_fx.convert_fx(quant_model.module)
+            quant_model = quantize_fx.convert_fx(quant_model.module)
    
     #  Export to ONNX
     if hasattr(quant_model, "export"):
@@ -1032,7 +1035,7 @@ if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    NUM_EPOCHS = 15
+    NUM_EPOCHS = 10
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'PTQ' #'PTQ' #'QAT' #None
     WEIGHT_BITWIDTH = 8 #2 #4 #8
@@ -1106,7 +1109,8 @@ if __name__ == '__main__':
         quant_epochs = (NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, 
                                       weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, 
-                                      quantization_method=QUANTIZATION_METHOD, quantization_device_type=QUANTIZATION_DEVICE_TYPE)
+                                      quantization_method=QUANTIZATION_METHOD, quantization_device_type=QUANTIZATION_DEVICE_TYPE,
+                                      bias_calibration_factor=0.05)
     
         if QUANTIZATION_METHOD == 'QAT':
             quant_learning_rate = (LEARNING_RATE/100) #if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
@@ -1118,7 +1122,7 @@ if __name__ == '__main__':
         
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
         print(f"{QUANTIZATION_METHOD} Model Accuracy: {round(accuracy, 5)}\n")
-        if WEIGHT_BITWIDTH == 8:
+        if WEIGHT_BITWIDTH == 8 and False:
             export_model(quant_model.module, example_input, 'qdq_' + MODEL_NAME, with_quant=False)
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
 
@@ -1129,11 +1133,11 @@ if __name__ == '__main__':
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
     print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
 
-    # random_indices = random.sample(range(len(ds_test)), 1000)
-    # ds_test_subset = Subset(ds_test, random_indices)
-    # ds_test_loader = DataLoader(dataset=ds_test_subset, batch_size=100, shuffle=False, drop_last=False)
-    # accuracy = validate_saved_model(MODEL_NAME, ds_test_loader)
-    # print(f"Exported ONNX Quant Model Accuracy on 1000 samples: {accuracy}")
+    random_indices = random.sample(range(len(ds_test)), 1000)
+    ds_test_subset = Subset(ds_test, random_indices)
+    ds_test_loader = DataLoader(dataset=ds_test_subset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
+    accuracy = validate_saved_model(MODEL_NAME, ds_test_loader)
+    print(f"Exported ONNX Quant Model Accuracy on 1000 samples: {accuracy}")
 
     import os
     l = os.listdir()
