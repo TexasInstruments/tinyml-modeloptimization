@@ -1035,15 +1035,15 @@ if __name__ == '__main__':
 
     MODEL_NAME = "kws.onnx"
     CATEGORIES_NAME = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 2.5
     LEARNING_RATE = 0.5
     QUANTIZATION_METHOD = 'PTQ' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 8 #2 #4 #8
+    WEIGHT_BITWIDTH = 4 #2 #4 #8
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = False #True, #False
     NUM_CATEGORIES = 12  
-    BATCH_SIZE = 489
+    BATCH_SIZE = 10
     SEED = 42
     MODEL_TRAINING = False
     LOAD_MODEL_FROM_FILE = False
@@ -1106,11 +1106,11 @@ if __name__ == '__main__':
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
 
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs = int(NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, 
                                       weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, 
                                       quantization_method=QUANTIZATION_METHOD, quantization_device_type=QUANTIZATION_DEVICE_TYPE,
-                                      bias_calibration_factor=0.05)
+                                      bias_calibration_factor=0.0)
     
         if QUANTIZATION_METHOD == 'QAT':
             quant_learning_rate = (LEARNING_RATE/100) #if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else (LEARNING_RATE/10)
