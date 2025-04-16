@@ -34,19 +34,7 @@ import torch
 from torch.ao.quantization import QConfig, QConfigMapping
 
 from . import observer_types
-from . bit_layers import get_2bit_layers, get_4bit_layers, get_8bit_layers
 
-def get_bit_layers(bit_width, module):
-    layers = []
-    if bit_width == 8:
-        layers = get_8bit_layers(module)
-    elif bit_width == 4:
-        layers = get_4bit_layers(module)
-    elif bit_width == 2:
-        layers = get_2bit_layers(module)
-    else:
-        raise RuntimeError("Unsupported bit width")
-    return layers
 
 def get_default_qconfig(qconfig_dict=None):
     '''
@@ -109,29 +97,43 @@ def get_default_qconfig(qconfig_dict=None):
     return qconfig
 
 
-def get_default_qconfig_mapping(qconfig_type=None, module=None):
+def apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision):
+    qconfig_mixed_precision = {}
+    for bit_width in mixed_precision:
+        # prepare qconfig_dict for current bit_width
+        qconfig_dict['weight']['bitwidth'] = bit_width
+        qconfig_dict['weight']['power2_scale'] = True if bit_width == 8 else False
+        qconfig_dict['activation']['power2_scale'] = True if bit_width == 8 else False
+        # prepare torch.ao.quantization.Qconfig for current bit_width
+        qconfig_mixed_precision[bit_width] = {}
+        qconfig_mixed_precision[bit_width]['qconfig'] = get_default_qconfig(qconfig_dict=qconfig_dict)
+        qconfig_mixed_precision[bit_width]['layers'] = mixed_precision[bit_width]
+
+    # apply the Qconfig on appropriate layers in QConfigMapping
+    for bit_width in mixed_precision:
+        for layer in qconfig_mixed_precision[bit_width]['layers']:
+            qconfig_mapping.set_module_name(layer, qconfig_mixed_precision[bit_width]['qconfig'])
+    #
+    return qconfig_mapping
+
+
+def get_default_qconfig_mapping(qconfig_type=None):
     qconfig_dict = qconfig_type
-    qconfig = {}
-    mixed_precision = qconfig_dict.get('mixed_precision', [])
-    mixed_precision.sort(reverse=True)
     if isinstance(qconfig_dict, dict) or qconfig_dict is None:
         qconfig_type = get_default_qconfig(qconfig_dict=qconfig_dict)
     #
     if not isinstance(qconfig_type, QConfig):
         raise RuntimeError("Unrecognized type of qconfig_type")
-
-    qconfig_mapping = QConfigMapping().set_global(qconfig_type)
     
-    for bit_width in mixed_precision:
-        qconfig_dict['weight']['bitwidth'] = bit_width
-        qconfig_dict['weight']['power2_scale'] = True if bit_width==8 else False
-        qconfig_dict['activation']['power2_scale'] = True if bit_width==8 else False
-        qconfig[bit_width] = dict()
-        qconfig[bit_width]['qconfig'] = get_default_qconfig(qconfig_dict=qconfig_dict)
-        qconfig[bit_width]['layers'] = get_bit_layers(bit_width, module)
-    #
-    for bitwidth in mixed_precision:
-        for layer in qconfig[bitwidth]['layers']:
-            qconfig_mapping.set_module_name(layer, qconfig[bitwidth]['qconfig'])
+    qconfig_mapping = QConfigMapping().set_global(qconfig_type)
+
+    weight_mixed_precision = qconfig_dict.get('weight', {}).get('mixed_precision', {})
+    if weight_mixed_precision:
+        qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, weight_mixed_precision)
+
+    # activation_mixed_precision = qconfig_dict.get('activation', {}).get('mixed_precision', {})
+    # if activation_mixed_precision:
+    #     qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, activation_mixed_precision)
+
     return qconfig_mapping
     

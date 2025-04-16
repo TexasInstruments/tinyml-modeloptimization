@@ -782,6 +782,8 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     The api being called doesn't actually pass qconfig_type - so it will be defined inside. 
     But if you need to pass, it can be defined.
     '''
+    is_qat = (quantization_method == 'QAT')
+
     if weight_bitwidth is None or activation_bitwidth is None:
         '''
         # 8bit weight / activation is default - no need to specify inside.
@@ -820,7 +822,6 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'fixed_range': False,
                 'histogram_range': 1
             },
-            'mixed_precision': [4, 8]
         }
     elif weight_bitwidth == 4:
         qconfig_type = {
@@ -829,7 +830,10 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': False,
                 'range_max': None,
-                'fixed_range': False
+                'fixed_range': False,
+                'mixed_precision': None if is_qat else \
+                    { 8: ['pointwise2', 'bn22', 'relu22', 'pointwise3', 'bn32', 'relu32', 
+                          'depthwise2', 'bn21', 'relu21', 'depthwise3', 'bn31', 'relu31']}
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
@@ -839,7 +843,6 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'fixed_range': False,
                 'histogram_range': 1
             },
-            'mixed_precision': [4, 8]
         }
     elif weight_bitwidth == 2:
         qconfig_type = {
