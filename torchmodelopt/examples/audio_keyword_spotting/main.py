@@ -400,7 +400,7 @@ def prepare_dataset(root=".", force=False, seed=1, audio_features="tfMFCC"):
     print(f"Val dataset samples = {val_samples}")
 
     shutil.rmtree(test_dir)
-    os.environ["http_proxy"] = "http://wwwinproxy.itg.ti.com:80" #for donwloading dataset over our Internal TI Network, customer can comment this 
+    os.environ["http_proxy"] = "http://wwwinproxy.itg.ti.com:80" #for downloading dataset over our Internal TI Network, customer can comment this 
     balanced_mlperf_test_url= "http://download.tensorflow.org/data/speech_commands_test_set_v0.02.tar.gz"
 
     download_path=os.path.join(root,"SpeechCommands","Google_vcdataset.tar.gz")
@@ -1138,9 +1138,4 @@ if __name__ == '__main__':
     ds_test_loader = DataLoader(dataset=ds_test_subset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
     accuracy = validate_saved_model(MODEL_NAME, ds_test_loader)
     print(f"Exported ONNX Quant Model Accuracy on 1000 samples: {accuracy}")
-
-    import os
-    l = os.listdir()
-    for file in l:
-        if file.endswith('.onnx') and False:
-            os.remove(file)
+    #
