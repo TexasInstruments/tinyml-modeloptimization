@@ -98,21 +98,15 @@ def get_default_qconfig(qconfig_dict=None):
 
 
 def apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision):
-    qconfig_mixed_precision = {}
+
     for bit_width in mixed_precision:
         # prepare qconfig_dict for current bit_width
         qconfig_dict['weight']['bitwidth'] = bit_width
-        qconfig_dict['weight']['power2_scale'] = True if bit_width == 8 else False
-        qconfig_dict['activation']['power2_scale'] = True if bit_width == 8 else False
         # prepare torch.ao.quantization.Qconfig for current bit_width
-        qconfig_mixed_precision[bit_width] = {}
-        qconfig_mixed_precision[bit_width]['qconfig'] = get_default_qconfig(qconfig_dict=qconfig_dict)
-        qconfig_mixed_precision[bit_width]['layers'] = mixed_precision[bit_width]
-
-    # apply the Qconfig on appropriate layers in QConfigMapping
-    for bit_width in mixed_precision:
-        for layer in qconfig_mixed_precision[bit_width]['layers']:
-            qconfig_mapping.set_module_name(layer, qconfig_mixed_precision[bit_width]['qconfig'])
+        qconfig = get_default_qconfig(qconfig_dict=qconfig_dict)
+        layers = mixed_precision[bit_width]
+        for layer in layers:
+            qconfig_mapping.set_module_name(layer, qconfig)
     #
     return qconfig_mapping
 

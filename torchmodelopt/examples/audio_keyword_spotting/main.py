@@ -824,21 +824,22 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             },
         }
     elif weight_bitwidth == 4:
+        mixed_precision = None if is_qat else \
+                    { 8: ['pointwise2', 'bn22', 'relu22', 'pointwise3', 'bn32', 'relu32', 
+                          'depthwise2', 'bn21', 'relu21', 'depthwise3', 'bn31', 'relu31']}
         qconfig_type = {
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
+                'power2_scale': True if mixed_precision else False,
                 'range_max': None,
                 'fixed_range': False,
-                'mixed_precision': None if is_qat else \
-                    { 8: ['pointwise2', 'bn22', 'relu22', 'pointwise3', 'bn32', 'relu32', 
-                          'depthwise2', 'bn21', 'relu21', 'depthwise3', 'bn31', 'relu31']}
+                'mixed_precision': mixed_precision
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
+                'power2_scale': True if mixed_precision else False,
                 'range_max': None,
                 'fixed_range': False,
                 'histogram_range': 1

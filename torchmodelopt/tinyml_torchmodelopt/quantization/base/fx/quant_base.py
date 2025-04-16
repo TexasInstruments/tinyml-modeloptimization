@@ -45,7 +45,8 @@ from . import bias_calibration
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
-                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=False, prepare_qdq=True, bias_calibration_factor=0.0, verbose=True):
+                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=False, 
+                 prepare_qdq=True, bias_calibration_factor=0.0, verbose=True):
         '''
         Parameters:
             model: input model to be quantized
@@ -56,7 +57,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             num_batch_norm_update_epochs:
                 False: do not freeze batch norm
                 None: freeze batch norm at half the epochs
-                Otherwise (a number): frweze batch norm at the specified number of epochs
+                Otherwise (a number): freeze batch norm at the specified number of epochs
             num_observer_update_epochs:
                 False: do not freeze observers
                 None: freeze observers at half the epochs
@@ -234,8 +235,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             # # Convert QDQ format to Int8 format
             import onnxruntime as ort
             qdq_filename = os.path.splitext(filename)[0] + '_qdq.onnx'
-            torch.onnx.export(model, example_inputs.to(device=device), qdq_filename, opset_version=opset_version,
-                              **export_kwargs)
+            torch.onnx.export(model, example_inputs.to(device=device), qdq_filename, opset_version=opset_version, **export_kwargs)
             so = ort.SessionOptions()
             so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
             so.optimized_model_filepath = filename
