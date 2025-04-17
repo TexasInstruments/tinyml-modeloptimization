@@ -1,37 +1,20 @@
-# Instructions to run motor_fault_classification.py
+# Motor Fault Time Series Classification
 
-## Install standard modules
+Motor Fault Dataset is a subset of motor fault dataset prepared by TIs Internal Team. The dataset consists of vibrations received from running motors. The motors can be classified as Normal, Localized Fault, Erosion Fault, Flaking Fault. The dataset has 4800030 samples. Each sample has 4 variables and 1 target.
 
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install onnx torchinfo tabulate
-```
+This example will use a Deep Learning model to train and classify the type of motor fault.
 
-## Install TI modules
+## Walkthrough of this Example
+1. Create train and test dataloader from csv
+2. Configure the training and quantization params
+4. Wrap the trained model around TinyMLFxModule
+5. Train and test this ti_model for `QAT`/`PTQ`
+6. Export the quantized model
 
-### Install TVM (known externally as TI MCU Neural Network Compiler)
+## Let's understand each step
 
-```bash
-# Install the NNC compiler
-pip install https://software-dl.ti.com/mctools/esd/tvm/mcu/ti_mcu_nnc-1.2.0-cp310-cp310-linux_x86_64.whl
-```
-
-### Install tinyml-modeloptimization
-
-```bash
-git clone ssh://git@bitbucket.itg.ti.com/tinyml-algo/tinyml-tensorlab.git
-cd tinyml-tensorlab/tinyml-modeloptimization/torchmodelopt
-./setup.sh
-```
-
-## Install TVM compiler dependencies
-
-TODO
-
-## Train the model 
-
-```bash
-# Perform Training, QAT, Export & Inference
-python3 motor_fault_classification.py
-```
-
+### Prepare Dataloader
+### Configure Quantization
+### Using Quantization
+### Train and Test Quantization on CNN Model
+### Exporting the quantized model
