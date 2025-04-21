@@ -1,7 +1,8 @@
 # Audio Keyword Spotting
 
 This  'audio keyword spotting' example is a PyTorch implementation of the Keyword Spotting application, one of the benchmark applications in MLPerf Tiny. MLPerf Tiny is an open-source benchmarking suite specifically designed for TinyML systems. Developed collaboratively by over 50 organizations from both academic and industrial sectors, the MLPerf Tiny inference benchmark suite offers four standardized benchmarks. These benchmarks are uniquely tailored to evaluate the key performance metrics crucial in TinyML applications: latency, energy consumption, and accuracy. By assessing these three aspects simultaneously, the suite effectively captures the complex trade-offs inherent in TinyML systems.
-dentifying particular words and short expressions, often referred to as keyword spotting, represents a crucial application of machine learning in low-power environments. This technology plays a significant role in facilitating voice-based interactions between humans and devices. As voice commands become increasingly prevalent in our daily lives, the ability to accurately detect specific keywords while conserving energy has become a key focus in the development of smart, power-efficient systems.
+
+Identifying particular words and short expressions, often referred to as keyword spotting, represents a crucial application of machine learning in low-power environments. This technology plays a significant role in facilitating voice-based interactions between humans and devices. As voice commands become increasingly prevalent in our daily lives, the ability to accurately detect specific keywords while conserving energy has become a key focus in the development of smart, power-efficient systems.
 
 ## Walkthrough of this Example
 1. Create train and test dataloader from torch.datasets
