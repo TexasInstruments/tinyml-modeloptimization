@@ -1047,7 +1047,7 @@ if __name__ == '__main__':
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = False #True, #False
     NUM_CATEGORIES = 12  
-    BATCH_SIZE = 10
+    BATCH_SIZE = 1
     SEED = 42
     MODEL_TRAINING = False
     LOAD_MODEL_FROM_FILE = False
