@@ -120,6 +120,8 @@ def get_default_qconfig_mapping(qconfig_type=None):
         raise RuntimeError("Unrecognized type of qconfig_type")
     
     qconfig_mapping = QConfigMapping().set_global(qconfig_type)
+    if qconfig_dict is None:
+        return qconfig_mapping
 
     weight_mixed_precision = qconfig_dict.get('weight', {}).get('mixed_precision', {})
     if weight_mixed_precision:
