@@ -26,11 +26,22 @@ class MultiplyModule(torch.nn.Module):
 class AdaptiveAvgPool2d(torch.nn.Module):
     def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
         super().__init__()
+    def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
+        super().__init__()
         self.reduce_sum = ReduceSum()
         self.round = RoundModule()
         self.scale = scale
         self.activation_bw = activation_bw
+        self.round = RoundModule()
+        self.scale = scale
+        self.activation_bw = activation_bw
         self.num_bits_scale = num_bits_scale
+        if zero_point == 0:
+            self.quant_min = 0
+            self.quant_max = 2**(activation_bw) - 1
+        else:
+            self.quant_min = -2**(activation_bw - 1)
+            self.quant_max = 2**(activation_bw - 1) - 1
         if zero_point == 0:
             self.quant_min = 0
             self.quant_max = 2**(activation_bw) - 1
@@ -42,6 +53,8 @@ class AdaptiveAvgPool2d(torch.nn.Module):
         shape = x.shape
         area = shape[2] * shape[3]
 
+        offset, mult, shift_mult = compute_offset_scale_shift(0, 1 / area, num_bits_scale=self.num_bits_scale)
+        oss = TINPUOffsetScaleShift(offset, mult, shift_mult, self.quant_min, self.quant_max, ndim=2, dim=1)
         offset, mult, shift_mult = compute_offset_scale_shift(0, 1 / area, num_bits_scale=self.num_bits_scale)
         oss = TINPUOffsetScaleShift(offset, mult, shift_mult, self.quant_min, self.quant_max, ndim=2, dim=1)
         
@@ -65,6 +78,7 @@ class AddReLUBlock(torch.nn.Module):
         self.num_bits_scale = num_bits_scale
 
         offset, mult, shift_mult = compute_offset_scale_shift(zero_point, scale, num_bits_scale=num_bits_scale)
+        self.oss = TINPUOffsetScaleShift(offset, mult, shift_mult, quant_min, quant_max, ndim=2)
         self.oss = TINPUOffsetScaleShift(offset, mult, shift_mult, quant_min, quant_max, ndim=2)
         self.relu = torch.nn.ReLU()
         self.clip = torch.nn.Hardtanh(min_relu_clip, max_relu_clip)
