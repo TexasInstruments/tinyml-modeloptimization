@@ -75,7 +75,7 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
 
     return matched_patterns
 
-def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=1, print_mse=False, clip_weights=False):
+def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, num_bits_shift: int = 5, num_bits_scale: int = 1, print_mse: bool = False, clip_weights: bool = False):
     """
     The functions takes quantization parameters (zero point, scale) to calculate the Offset, Scale, Shift required to quantize/dequantize the inputs. The range
     of weight must be less than equal to (2**num_bits_scale - 1). The tuple[torch.Tensor] output can be used to produce AMM (Offset, Scale, Right Shift) block
@@ -95,15 +95,15 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
         >>> oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -128, 127, ndim=4, dim=1)
     """
-    one = torch.tensor([1.0])
+    one = torch.ones(size=(1,))
     if not isinstance(offset, torch.Tensor):
         offset = one * (offset)
     if not isinstance(weight, torch.Tensor):
         weight = one * (weight)
     # Find the bounding values of scale
-    scale_max = 2**num_bits_scale - 1
+    scale_max: int = 2**num_bits_scale - 1
     # Max right shift operation supported
-    shift_max = 2**num_bits_shift - 1
+    shift_max: int = 2**num_bits_shift - 1
     # Separate the value and sign of weights
     if clip_weights:
         if max(weight.aminmax()) > scale_max:
@@ -123,8 +123,13 @@ def compute_offset_scale_shift(offset, weight, num_bits_shift=5, num_bits_scale=
 
     mask = torch.isnan(scaled_weights)
     scaled_weights[mask], shift[mask] = 0, 1
+    import warnings
+    from torch.jit import TracerWarning
+    warnings.filterwarnings("ignore", category=TracerWarning)
+    check = scaled_weights > scale_max
+    check = True in check.cpu().detach().numpy()
 
-    if torch.sum(scaled_weights > scale_max) != 0:
+    if check:
         raise RuntimeError(
             f"Error in quantization.convert :: compute_offset_scale_shift. Scaling could not be converted.\n"
             f"Invalid scale values: {weight.cpu().detach().numpy()}\n"
