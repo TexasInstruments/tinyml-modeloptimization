@@ -29,6 +29,7 @@ class AdaptiveAvgPool2d(torch.nn.Module):
         self.reduce_sum = ReduceSum()
         self.round = RoundModule()
         self.scale = scale
+        self.zero_point = zero_point
         self.activation_bw = activation_bw
         self.num_bits_scale = num_bits_scale
         if zero_point == 0:
@@ -42,7 +43,7 @@ class AdaptiveAvgPool2d(torch.nn.Module):
         shape = x.shape
         area = shape[2] * shape[3]
 
-        offset, mult, shift_mult = compute_offset_scale_shift(0, 1 / area, num_bits_scale=self.num_bits_scale)
+        offset, mult, shift_mult = compute_offset_scale_shift(self.zero_point, 1 / area, num_bits_scale=self.num_bits_scale)
         oss = TINPUOffsetScaleShift(offset, mult, shift_mult, self.quant_min, self.quant_max, ndim=2, dim=1)
         
         x = self.reduce_sum(x) 
