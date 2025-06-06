@@ -204,6 +204,8 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     an example input to convert the model.
     """
 
+    is_ti_npu = (quantization_device_type == "TINPU")
+    activation_qscheme = (torch.per_tensor_symmetric if is_ti_npu else torch.per_tensor_affine)
     '''
     The QAT wrapper module does the preparation like in:
     quant_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
@@ -219,16 +221,12 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': 8,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'power2_scale': is_ti_npu,
             },
             'activation': {
                 'bitwidth': 8,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
             }
         }
         '''
@@ -238,16 +236,12 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'power2_scale': is_ti_npu,
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
             }
         }
     elif weight_bitwidth == 4:
@@ -255,16 +249,12 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False
+                'power2_scale': is_ti_npu,
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
             }
         }
     elif weight_bitwidth == 2:
@@ -272,18 +262,14 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False,
+                'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
             }
         }
     else:
@@ -467,13 +453,14 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 8 #8 #4 #2
+    WEIGHT_BITWIDTH = 8 #4 #2
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
-    QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
-    NORMALIZE_INPUT = True #True, #False
+    QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU' #'TINPU', 'GENERIC'
+    NORMALIZE_INPUT = True #(False if QUANTIZATION_DEVICE_TYPE == 'GENERIC' else True) #True, #False
 
-    assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
-        'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
+    # TODO: implement convert for GENERIC model and remove this assert.
+    # assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
+    #     'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
 
     X, Y = get_dataset_from_csv(CSV_FILE)
 
@@ -503,7 +490,7 @@ if __name__ == '__main__':
 
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs = (NUM_EPOCHS) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs,
                 weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,
                 quantization_device_type=QUANTIZATION_DEVICE_TYPE)
