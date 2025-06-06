@@ -237,11 +237,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': is_ti_npu,
+                'soft_quant': (weight_bitwidth<4)
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
+                'soft_quant': (activation_bitwidth<8)
             }
         }
     elif weight_bitwidth == 4:
@@ -250,11 +252,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': is_ti_npu,
+                'soft_quant': (weight_bitwidth<4)
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
+                'soft_quant': (activation_bitwidth<8)
             }
         }
     elif weight_bitwidth == 2:
@@ -265,12 +269,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
-                'soft_quant': True
+                'soft_quant': (weight_bitwidth<4)
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
+                'soft_quant': (activation_bitwidth<8)
             }
         }
     else:
@@ -491,7 +496,7 @@ if __name__ == '__main__':
 
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs = (NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs,
                 weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,
                 quantization_device_type=QUANTIZATION_DEVICE_TYPE)
