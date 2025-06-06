@@ -265,6 +265,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
+                'soft_quant': True
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
@@ -453,7 +454,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 8 #4 #2
+    WEIGHT_BITWIDTH = 2 #8 #4 #2
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #(False if QUANTIZATION_DEVICE_TYPE == 'GENERIC' else True) #True, #False

@@ -34,6 +34,7 @@ import torch
 from torch.ao.quantization import QConfig, QConfigMapping
 
 from . import observer_types
+from . import fake_quant_types
 
 
 def get_default_qconfig(qconfig_dict=None):
@@ -52,6 +53,7 @@ def get_default_qconfig(qconfig_dict=None):
     weight_range_max = weight_qconfig.get('range_max', None)
     weight_fixed_range = weight_qconfig.get('fixed_range', False)
     weight_histogram_range = weight_qconfig.get('histogram_range', False)
+    weight_soft_quant = weight_qconfig.get('soft_quant', False)
 
     activation_qconfig = qconfig_dict.get('activation', dict())
     activation_dtype = activation_qconfig.get('dtype', torch.quint8)
@@ -64,6 +66,7 @@ def get_default_qconfig(qconfig_dict=None):
     activation_fixed_range = activation_qconfig.get('fixed_range', False)
     activation_histogram_range = activation_qconfig.get('histogram_range', False)
     bias_calibration_factor = activation_qconfig.get('bias_calibration_factor', 0.0)
+    activation_soft_quant = activation_qconfig.get('soft_quant', False)
 
     if weight_qscheme == torch.per_channel_symmetric:
         # we don't have a histogram observer that can do per_channel_symmetric - so use MinMax
@@ -74,7 +77,9 @@ def get_default_qconfig(qconfig_dict=None):
     else:
         weight_observer_base_class = torch.ao.quantization.MinMaxObserver
     #
-    weight_fake_quant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(
+    weight_fake_quant_type = fake_quant_types.SoftFakeQuantize if weight_soft_quant else \
+            torch.ao.quantization.fake_quantize.FakeQuantize
+    weight_fake_quant = weight_fake_quant_type.with_args(
         observer=observer_types.get_weight_observer_type(base_class=weight_observer_base_class),
         quant_min=weight_quant_min, quant_max=weight_quant_max,
         qscheme=weight_qscheme, dtype=weight_dtype, power2_scale=weight_power2_scale,
@@ -86,7 +91,9 @@ def get_default_qconfig(qconfig_dict=None):
     else:
         activation_observer_base_class = torch.ao.quantization.MovingAverageMinMaxObserver
     #
-    activation_fake_quant = torch.ao.quantization.fake_quantize.FakeQuantize.with_args(
+    activation_fake_quant_type = fake_quant_types.SoftFakeQuantize if activation_soft_quant else \
+            torch.ao.quantization.fake_quantize.FakeQuantize
+    activation_fake_quant = activation_fake_quant_type.with_args(
         observer=observer_types.get_activation_observer_type(base_class=activation_observer_base_class),
         quant_min=activation_quant_min, quant_max=activation_quant_max,
         qscheme=activation_qscheme, dtype=activation_dtype, power2_scale=activation_power2_scale,

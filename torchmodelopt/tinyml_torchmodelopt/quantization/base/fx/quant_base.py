@@ -32,6 +32,7 @@
 import os
 import warnings
 import copy
+import numpy as np
 import torch
 from torch.ao.quantization import quantize_fx
 from torch.ao.quantization import QConfigMapping
@@ -41,11 +42,12 @@ from ... import common
 from . import qconfig_types
 from . import quant_utils
 from . import bias_calibration
+from . import fake_quant_types
 
 
 class TinyMLQuantFxBaseModule(torch.nn.Module):
     def __init__(self, model, qconfig_type=None, example_inputs=None, is_qat=True, backend="qnnpack",
-                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=False, 
+                 total_epochs=0, num_batch_norm_update_epochs=None, num_observer_update_epochs=False,
                  prepare_qdq=True, bias_calibration_factor=0.0, verbose=True):
         '''
         Parameters:
@@ -142,6 +144,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         if not verbose:
             quant_utils.print_once_dict = {'Freezing BN for subsequent epochs': None,
                                            'Freezing ranges for subsequent epochs': None}
+        self.temperature_log_space = np.exp(np.linspace(np.log(6), np.log(500), self.total_epochs))
 
     def set_quant_backend(self, backend=None):
         if backend not in torch.backends.quantized.supported_engines:
@@ -171,10 +174,16 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             freeze_bn = enable_freeze_bn and ((not self.is_qat) or (self.num_epochs_tracked >= num_batch_norm_update_epochs))
             freeze_observers = enable_freeze_observer and ((self.num_epochs_tracked >= num_observer_update_epochs))
             self.freeze(freeze_bn=freeze_bn, freeze_observers=freeze_observers)
-            self.num_epochs_tracked += 1
             if (not self.is_qat) and self.bias_calibration_factor:
                 self.bias_calibration_hooks = bias_calibration.insert_bias_calibration_hooks(self.module, self.total_epochs, self.num_epochs_tracked)
             #
+            for m in self.modules():
+                if isinstance(m, fake_quant_types.SoftFakeQuantize):
+                    temperature = self.temperature_log_space[self.num_epochs_tracked]
+                    m.update_temperature(temperature)
+                #
+            #
+            self.num_epochs_tracked += 1
         else:
             self.freeze()
             if (not self.is_qat) and self.bias_calibration_factor:
