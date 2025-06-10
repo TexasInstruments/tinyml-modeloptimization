@@ -115,6 +115,10 @@ class TINPUQuantizedReplacementUtils():
                     args = node.args
                     scale = getattr(self.module, args[1].target)
                     zero_point = getattr(self.module, args[2].target)
+                    named_modules = self._get_named_modules()
+                    if node.args[0].target in named_modules and isinstance(named_modules[node.args[0].target], torch.nn.Flatten):
+                        args = node.args[0].args[0].args[0]
+                        scale, zero_point = self.get_q_params(args, using='prev')
                 elif node.name.startswith(('add')):
                     args = node.args
                     scale = getattr(self.module, args[2].target)
@@ -421,8 +425,11 @@ class TINPUQuantizedReplacementUtils():
         return None
     
     def from_add_relu(self, start: Node, end: Node, with_relu: bool=True):            
-        scale, zero_point = self.get_q_params(start, using='prev')
-        add_relu_block = AddReLUBlock(0, 2**self.activation_bw - 1, scale, zero_point*0.0, with_relu, num_bits_scale=self.num_bits_scale)
+        add_scale, zero_point_1 = self.get_q_params(start, using='prev')
+        input_scale, zero_point_2 = self.get_q_params(start.args[0], using='prev')
+        scale = input_scale / add_scale
+        zero_point = zero_point_1
+        add_relu_block = AddReLUBlock(0, 2**self.activation_bw - 1, scale, zero_point, with_relu, num_bits_scale=self.num_bits_scale)
         replace_call_function_or_method(self.module, start, start, add_relu_block, self._get_module_num())
         return None
     
@@ -492,7 +499,8 @@ class TINPUQuantizedReplacementUtils():
             #  If output size isn't (1, 1), we will use the generic implementation
             replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
             return None
-        pool_module = AdaptiveAvgPool2d(activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
+        scale, zero_point = self.get_q_params(start, using='prev')
+        pool_module = AdaptiveAvgPool2d(scale, zero_point, activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
         replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
         return None
