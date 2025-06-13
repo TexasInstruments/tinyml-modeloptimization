@@ -103,6 +103,8 @@ def get_default_qconfig(qconfig_dict=None):
     #
     if activation_soft_quant == 'soft_tanh':
         activation_fake_quant_type = fake_quant_types.SoftTanhFakeQuantize
+    elif activation_soft_quant == 'soft_sigmoid':
+        activation_fake_quant_type = fake_quant_types.SoftSigmoidFakeQuantize
     elif activation_soft_quant == 'default':
         activation_fake_quant_type = torch.ao.quantization.FakeQuantize
     else:

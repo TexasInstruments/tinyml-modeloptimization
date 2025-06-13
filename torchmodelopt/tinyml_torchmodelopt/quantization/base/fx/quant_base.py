@@ -180,7 +180,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
                 self.bias_calibration_hooks = bias_calibration.insert_bias_calibration_hooks(self.module, self.total_epochs, self.num_epochs_tracked)
             #
             for m in self.modules():
-                if isinstance(m, fake_quant_types.SoftTanhFakeQuantize):
+                if isinstance(m, fake_quant_types.SoftTanhFakeQuantize) or isinstance(m, fake_quant_types.SoftSigmoidFakeQuantize):
                     temperature = self.temperature_log_space[self.num_epochs_tracked]
                     m.update_temperature(temperature)
                 #
