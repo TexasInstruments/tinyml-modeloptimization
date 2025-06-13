@@ -82,14 +82,23 @@ class SoftSigmoidFakeQuantize(torch.ao.quantization.fake_quantize.FakeQuantize):
     def forward(self, X: torch.Tensor):
         Y = super().forward(X)
 
-        dataflat = X.reshape(X.shape[0], -1)
-        data_normalized = (dataflat / self.scale.unsqueeze(-1)) + self.zero_point.unsqueeze(-1)
-
         if self.training:
             # Apply smooth quantization
+
+            #
+            if self.is_per_channel:
+                scale = self.scale.clone().unsqueeze(-1)
+                zero_point = self.zero_point.clone().unsqueeze(-1)
+            else:
+                scale = self.scale.clone()
+                zero_point = self.zero_point.clone()
+            #
+
+            dataflat = X.reshape(X.shape[0], -1)
+            data_normalized = (dataflat / scale) + zero_point
             data_soft_quant = self.soft_round(data_normalized)
             data_soft_clamped = torch.clamp(data_soft_quant, min=self.quant_min, max=self.quant_max)
-            data_soft_dequant = (data_soft_clamped - self.zero_point.unsqueeze(-1)) * self.scale.unsqueeze(-1)
+            data_soft_dequant = (data_soft_clamped - zero_point) * scale
             qdata_soft = data_soft_dequant.reshape(X.shape)
             '''
             Include super().forward() ouput in computation graph, to make sure gradient is properly handled
@@ -159,13 +168,22 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
     def forward(self, X):
         Y = super().forward(X)
 
-        dataflat = X.view(X.size(0), -1)
-        data_normalized = (dataflat / self.scale.unsqueeze(-1)) + self.zero_point.unsqueeze(-1)
-        data_round = self.soft_round(data_normalized, self.temperature)
-        data_quant = torch.clamp(data_round, self.quant_min, self.quant_max)
-        data_dequant = (data_quant - self.zero_point.unsqueeze(-1)) * self.scale.unsqueeze(-1)
-        data_dequant = data_dequant.view(X.size())
         if self.training:
+            #
+            if self.is_per_channel:
+                scale = self.scale.clone().unsqueeze(-1)
+                zero_point = self.zero_point.clone().unsqueeze(-1)
+            else:
+                scale = self.scale.clone()
+                zero_point = self.zero_point.clone()
+            #
+            
+            dataflat = X.view(X.size(0), -1)
+            data_normalized = (dataflat / scale) + zero_point
+            data_round = self.soft_round(data_normalized, self.temperature)
+            data_quant = torch.clamp(data_round, self.quant_min, self.quant_max)
+            data_dequant = (data_quant - zero_point) * scale
+            data_dequant = data_dequant.view(X.size())
             return Y + data_dequant - Y
         else:
             return Y
