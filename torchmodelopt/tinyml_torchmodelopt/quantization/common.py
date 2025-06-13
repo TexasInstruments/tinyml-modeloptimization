@@ -131,7 +131,7 @@ class TinyMLQConfigType:
                     'power2_scale': False,
                     'range_max': None,
                     'fixed_range': False,
-                    'soft_quant': 'default' # 'default' 'soft_tanh'
+                    'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
                 }
             }
         elif weight_bitwidth == 2:
@@ -152,7 +152,7 @@ class TinyMLQConfigType:
                     'power2_scale': False,
                     'range_max': None,
                     'fixed_range': False,
-                    'soft_quant': 'default' # 'default' 'soft_tanh'
+                    'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
                 }
             }
         else:
