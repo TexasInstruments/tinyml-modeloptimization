@@ -32,6 +32,7 @@
 # Imports Torch
 import torch
 from torch.ao.quantization import QConfig, QConfigMapping
+import torch.ao.quantization
 
 from . import observer_types
 from . import fake_quant_types
@@ -77,8 +78,17 @@ def get_default_qconfig(qconfig_dict=None):
     else:
         weight_observer_base_class = torch.ao.quantization.MinMaxObserver
     #
-    weight_fake_quant_type = fake_quant_types.SoftFakeQuantize if weight_soft_quant else \
-            torch.ao.quantization.fake_quantize.FakeQuantize
+    if weight_soft_quant == 'soft_tanh':
+        weight_fake_quant_type = fake_quant_types.SoftTanhFakeQuantize
+    elif weight_soft_quant == 'soft_sigmoid':
+        weight_fake_quant_type = fake_quant_types.SoftSigmoidFakeQuantize
+    elif weight_soft_quant == 'default':
+        weight_fake_quant_type = torch.ao.quantization.FakeQuantize
+    else:
+        raise ValueError(f"Invalid weight soft quantization type\n \
+                         Weight Soft Quantization types could be 'soft_tanh', 'soft_sigmoid' and 'default'")
+    #
+
     weight_fake_quant = weight_fake_quant_type.with_args(
         observer=observer_types.get_weight_observer_type(base_class=weight_observer_base_class),
         quant_min=weight_quant_min, quant_max=weight_quant_max,
@@ -91,8 +101,15 @@ def get_default_qconfig(qconfig_dict=None):
     else:
         activation_observer_base_class = torch.ao.quantization.MovingAverageMinMaxObserver
     #
-    activation_fake_quant_type = fake_quant_types.SoftFakeQuantize if activation_soft_quant else \
-            torch.ao.quantization.fake_quantize.FakeQuantize
+    if activation_soft_quant == 'soft_tanh':
+        activation_fake_quant_type = fake_quant_types.SoftTanhFakeQuantize
+    elif activation_soft_quant == 'default':
+        activation_fake_quant_type = torch.ao.quantization.FakeQuantize
+    else:
+        raise ValueError(f"Invalid activation soft quantization type\n \
+                         Weight Soft Quantization types could be 'soft_tanh' and 'default'")
+    #
+
     activation_fake_quant = activation_fake_quant_type.with_args(
         observer=observer_types.get_activation_observer_type(base_class=activation_observer_base_class),
         quant_min=activation_quant_min, quant_max=activation_quant_max,

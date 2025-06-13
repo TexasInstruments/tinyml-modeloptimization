@@ -144,7 +144,9 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         if not verbose:
             quant_utils.print_once_dict = {'Freezing BN for subsequent epochs': None,
                                            'Freezing ranges for subsequent epochs': None}
-        self.temperature_log_space = np.exp(np.linspace(np.log(6), np.log(500), self.total_epochs))
+            
+        # Temperature logspace array for uniform shift from soft quant to hard quant
+        self.temperature_log_space = np.exp(np.linspace(np.log(1), np.log(500), self.total_epochs))
 
     def set_quant_backend(self, backend=None):
         if backend not in torch.backends.quantized.supported_engines:
@@ -178,14 +180,14 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
                 self.bias_calibration_hooks = bias_calibration.insert_bias_calibration_hooks(self.module, self.total_epochs, self.num_epochs_tracked)
             #
             for m in self.modules():
-                if isinstance(m, fake_quant_types.SoftFakeQuantize):
+                if isinstance(m, fake_quant_types.SoftTanhFakeQuantize):
                     temperature = self.temperature_log_space[self.num_epochs_tracked]
                     m.update_temperature(temperature)
                 #
             #
             self.num_epochs_tracked += 1
         else:
-            self.freeze()
+            # self.freeze()
             if (not self.is_qat) and self.bias_calibration_factor:
                 self.bias_calibration_hooks = bias_calibration.remove_hooks(self.module, self.bias_calibration_hooks)
             #

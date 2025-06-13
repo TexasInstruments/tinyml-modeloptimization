@@ -239,6 +239,7 @@ class TINPUQuantizedReplacementUtils():
         scale = qbn_module.scale
         zero_point = qbn_module.zero_point
 
+        # scaled_weight = qbn_module.weight / scale + zero_point
         oss_offset = (- qbn_module.running_mean + qbn_module.bias*bn_sigma)
         # first get the effective weight due to batchnorm
         combined_weight = (qbn_module.weight / bn_sigma)
@@ -284,7 +285,7 @@ class TINPUQuantizedReplacementUtils():
         if per_channel:
             qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
         else:
-            qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+            qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, torch.qint32)
         
         qbias = qbias.int_repr()
 

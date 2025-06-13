@@ -204,7 +204,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     an example input to convert the model.
     """
 
-    is_ti_npu = (quantization_device_type == "TINPU")
+    is_ti_npu = (quantization_device_type == "TINPU" and weight_bitwidth == 8)
     activation_qscheme = (torch.per_tensor_symmetric if is_ti_npu else torch.per_tensor_affine)
     '''
     The QAT wrapper module does the preparation like in:
@@ -236,14 +236,12 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-                'soft_quant': (weight_bitwidth<4)
+                'power2_scale': is_ti_npu
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-                'soft_quant': (activation_bitwidth<8)
+                'power2_scale': is_ti_npu
             }
         }
     elif weight_bitwidth == 4:
@@ -252,13 +250,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': is_ti_npu,
-                'soft_quant': (weight_bitwidth<4)
+                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': (activation_bitwidth<8)
+                'soft_quant': 'soft_tanh' # 'default'
             }
         }
     elif weight_bitwidth == 2:
@@ -269,13 +267,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
-                'soft_quant': (weight_bitwidth<4)
+                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': (activation_bitwidth<8)
+                'soft_quant': 'soft_tanh' # 'default'
             }
         }
     else:
