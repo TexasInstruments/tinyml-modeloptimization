@@ -250,13 +250,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'default'
+                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'default'
+                'soft_quant': 'default' # 'default' 'soft_tanh'
             }
         }
     elif weight_bitwidth == 2:
@@ -267,13 +267,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
-                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'default'
+                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'default'
+                'soft_quant': 'default' # 'default' 'soft_tanh'
             }
         }
     else:
@@ -457,8 +457,8 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 2 #8 #4 #2
-    ACTIVATION_BITWIDTH = 8 #8 #4 #2
+    WEIGHT_BITWIDTH = 4 #8 #4 #2
+    ACTIVATION_BITWIDTH = 4 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #(False if QUANTIZATION_DEVICE_TYPE == 'GENERIC' else True) #True, #False
 

@@ -276,7 +276,7 @@ qconfig_type = {
                     'power2_scale': True, if TINPU and weight_bitwidth == 8
                     'range_max': None,
                     'fixed_range': False,
-                    'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'default'
+                    'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
                 },
                 'activation': {
                     'bitwidth': activation_bitwidth,
@@ -284,7 +284,7 @@ qconfig_type = {
                     'power2_scale': True, if TINPU and weight_bitwidth == 8
                     'range_max': None,
                     'fixed_range': False,
-                    'soft_quant': 'soft_tanh' # 'default'
+                    'soft_quant': 'default' # 'default' 'soft_tanh'
                 }
             }
 '''
