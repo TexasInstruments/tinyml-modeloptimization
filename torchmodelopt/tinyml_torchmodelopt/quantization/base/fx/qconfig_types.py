@@ -107,7 +107,7 @@ def get_default_qconfig(qconfig_dict=None):
         activation_fake_quant_type = torch.ao.quantization.FakeQuantize
     else:
         raise ValueError(f"Invalid activation soft quantization type\n \
-                         Weight Soft Quantization types could be 'soft_tanh' and 'default'")
+                         Activation Soft Quantization types could be 'soft_tanh' and 'default'")
     #
 
     activation_fake_quant = activation_fake_quant_type.with_args(
