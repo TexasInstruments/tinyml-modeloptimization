@@ -54,7 +54,7 @@ def get_default_qconfig(qconfig_dict=None):
     weight_range_max = weight_qconfig.get('range_max', None)
     weight_fixed_range = weight_qconfig.get('fixed_range', False)
     weight_histogram_range = weight_qconfig.get('histogram_range', False)
-    weight_soft_quant = weight_qconfig.get('soft_quant', False)
+    weight_soft_quant = weight_qconfig.get('soft_quant', 'default')
 
     activation_qconfig = qconfig_dict.get('activation', dict())
     activation_dtype = activation_qconfig.get('dtype', torch.quint8)
@@ -67,7 +67,7 @@ def get_default_qconfig(qconfig_dict=None):
     activation_fixed_range = activation_qconfig.get('fixed_range', False)
     activation_histogram_range = activation_qconfig.get('histogram_range', False)
     bias_calibration_factor = activation_qconfig.get('bias_calibration_factor', 0.0)
-    activation_soft_quant = activation_qconfig.get('soft_quant', False)
+    activation_soft_quant = activation_qconfig.get('soft_quant', 'default')
 
     if weight_qscheme == torch.per_channel_symmetric:
         # we don't have a histogram observer that can do per_channel_symmetric - so use MinMax

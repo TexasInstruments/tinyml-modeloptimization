@@ -187,7 +187,8 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             #
             self.num_epochs_tracked += 1
         else:
-            self.freeze()
+            if self.num_epochs_tracked == self.total_epochs:
+                self.freeze()
             if (not self.is_qat) and self.bias_calibration_factor:
                 self.bias_calibration_hooks = bias_calibration.remove_hooks(self.module, self.bias_calibration_hooks)
             #

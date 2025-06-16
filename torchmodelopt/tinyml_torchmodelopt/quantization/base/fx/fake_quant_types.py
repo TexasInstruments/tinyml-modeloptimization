@@ -103,7 +103,7 @@ class SoftSigmoidFakeQuantize(torch.ao.quantization.fake_quantize.FakeQuantize):
             '''
             Include super().forward() ouput in computation graph, to make sure gradient is properly handled
             '''
-            output = Y + qdata_soft - Y
+            output = qdata_soft
         else:
             # data_hard_quant = self.hard_round(data_normalized)
             # data_hard_clamped = torch.clamp(data_hard_quant, min=self.quant_min, max=self.quant_max)
@@ -184,6 +184,6 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
             data_quant = torch.clamp(data_round, self.quant_min, self.quant_max)
             data_dequant = (data_quant - zero_point) * scale
             data_dequant = data_dequant.view(X.size())
-            return Y + data_dequant - Y
+            return data_dequant
         else:
             return Y

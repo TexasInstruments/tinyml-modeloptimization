@@ -31,7 +31,6 @@
 
 import warnings
 import torch
-import torch.ao.quantization
 from torch.fx import GraphModule
 
 import platform

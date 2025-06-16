@@ -23,6 +23,18 @@ class MultiplyModule(torch.nn.Module):
     def forward(self, x):
         return torch.mul(x, self.value)
 
+class QDQModule(torch.nn.Module):
+    def __init__(self, scale_1, scale_2):
+        super().__init__()
+        self.q = MultiplyModule(scale_1)
+        self.round = RoundModule()
+        self.dq = MultiplyModule(scale_2)
+    def forward(self, x):
+        x = self.q(x)
+        x = self.round(x)
+        x = self.dq(x)
+        return x   
+
 class AdaptiveAvgPool2d(torch.nn.Module):
     def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
         super().__init__()
