@@ -75,7 +75,7 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
 
     return matched_patterns
 
-def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, num_bits_shift: int = 5, num_bits_scale: int = 1, print_mse: bool = False, clip_weights: bool = False):
+def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, round_offset: torch.Tensor=None, num_bits_shift: int=5, num_bits_scale: int=1, int_bias: bool=True, clip_weights: bool=False):
     """
     The functions takes quantization parameters (zero point, scale) to calculate the Offset, Scale, Shift required to quantize/dequantize the inputs. The range
     of weight must be less than equal to (2**num_bits_scale - 1). The tuple[torch.Tensor] output can be used to produce AMM (Offset, Scale, Right Shift) block
@@ -86,7 +86,8 @@ def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, num_b
         `weight`: multiplicative weight
         `num_bits_shift`: number of bits to represent the shift value. this is not the number of bits to shift (which depends on the weight value), but the number of bits to represent the shift value.
         `num_bits_scale`: number of bits to represent the scale value.
-        `print_mse`: mean squared error occurred due to scale and shift
+        `int_bias`: if True, the offset is rounded to the nearest integer, otherwise it is left as a float
+        `clip_weights`: if True, the weights are clipped to the range of [-(2**num_bits_scale - 1), (2**num_bits_scale - 1)], this will result in wrong quantization, but can be used for experiments
 
     Returns the computed offset, scale, shift
 
@@ -142,14 +143,13 @@ def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, num_b
     scaled_signed_weights = weight_sign * torch.round(scaled_weights)
     shift_mult = torch.pow(one*2, -shift)
 
-    if print_mse:
-        weight_hat = scaled_signed_weights * torch.pow(one*2, -shift)
-        mse = torch.mean((weight-weight_hat)**2)
-        print(mse)
-
     # add round offset to the offset. since the offset is before the scale, divide it by scale before adding
     shift_round_offset = torch.pow(one*2, (shift-1)) / scaled_signed_weights
-    offset = torch.round(offset + shift_round_offset)
+    if round_offset is not None:
+        shift_round_offset = round_offset
+    offset = offset + shift_round_offset
+    if int_bias:
+        offset = torch.round(offset)
     return offset, scaled_signed_weights, shift_mult
 
 def _get_parent_name(target: str):
