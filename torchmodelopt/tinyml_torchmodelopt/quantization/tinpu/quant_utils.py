@@ -283,7 +283,7 @@ class TINPUQuantizedReplacementUtils():
 
         qbias = ((bias / bias_scale) + bias_zero_point).float().detach()
         round_offset = qconvrelu_module.scale/2
-        int_bias = (self.weight_bw, self.activation_bw) not in [(2, 8), (4, 4)]
+        int_bias = (self.weight_bw, self.activation_bw) not in []
         if int_bias:
             if per_channel:
                 qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
