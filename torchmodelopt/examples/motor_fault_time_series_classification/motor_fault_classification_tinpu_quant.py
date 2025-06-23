@@ -204,6 +204,8 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     an example input to convert the model.
     """
 
+    is_ti_npu = (quantization_device_type == "TINPU" and weight_bitwidth == 8)
+    activation_qscheme = (torch.per_tensor_symmetric if is_ti_npu else torch.per_tensor_affine)
     '''
     The QAT wrapper module does the preparation like in:
     quant_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
@@ -219,16 +221,12 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': 8,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'power2_scale': is_ti_npu,
             },
             'activation': {
                 'bitwidth': 8,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
             }
         }
         '''
@@ -238,16 +236,12 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'power2_scale': is_ti_npu
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': True,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu
             }
         }
     elif weight_bitwidth == 4:
@@ -255,16 +249,14 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False
+                'power2_scale': is_ti_npu,
+                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
+                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
             }
         }
     elif weight_bitwidth == 2:
@@ -272,18 +264,16 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
             'weight': {
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False,
+                'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
+                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
-                'qscheme': torch.per_tensor_symmetric,
-                'power2_scale': False,
-                'range_max': None,
-                'fixed_range': False
+                'qscheme': activation_qscheme,
+                'power2_scale': is_ti_npu,
+                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
             }
         }
     else:
