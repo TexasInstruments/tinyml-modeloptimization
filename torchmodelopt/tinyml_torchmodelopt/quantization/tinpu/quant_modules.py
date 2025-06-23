@@ -35,6 +35,14 @@ class QDQModule(torch.nn.Module):
         x = self.dq(x)
         return x   
 
+class PermuteModule(torch.nn.Module):
+    def __init__(self, perm):
+        super().__init__()
+        self.perm = perm
+
+    def forward(self, x):
+        return x.permute(self.perm)
+
 class AdaptiveAvgPool2d(torch.nn.Module):
     def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
         super().__init__()

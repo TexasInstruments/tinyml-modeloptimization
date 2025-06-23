@@ -403,6 +403,16 @@ class TINPUQuantizedReplacementUtils():
         replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())
         return None
     
+    def from_permute(self, start: Node, end: Node):
+        # Permute Node
+        permute_node = end
+        # Prepare the permute module and fill it with dimensions
+        dims = permute_node.args[1:]
+        perm_module = PermuteModule(dims)
+        # Replaces the permute method with the module and drops the nodes till quantization node
+        replace_call_function_or_method(self.module, start, permute_node, perm_module, self._get_module_num(), self.rename_nodes_flag)
+        return None
+    
     # Replacement Rules for Flatten
     def from_flatten(self, start: Node, end: Node):
         named_modules = self._get_named_modules()

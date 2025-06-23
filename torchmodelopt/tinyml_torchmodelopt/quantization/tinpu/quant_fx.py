@@ -172,6 +172,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             (['dequantize', torch.nn.Flatten], replacement_utils.from_dq_flatten),                  # Removes dequantization
             ([torch.quantize_per_tensor, torch.nn.Flatten], replacement_utils.from_q_module),        # Removes quantization
             ([torch.quantize_per_tensor, torch.ops.quantized.matmul, torch.ops.quantized.add], replacement_utils.from_matmul),
+            ([torch.quantize_per_tensor, torch.permute], replacement_utils.from_permute),
             # Torch Functions
             ([torch.ops.quantized.add_relu], replacement_utils.from_add_relu),
             ([torch.ops.quantized.add], replacement_utils.from_add),
