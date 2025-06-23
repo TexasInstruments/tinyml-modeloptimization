@@ -410,7 +410,7 @@ class TINPUQuantizedReplacementUtils():
         dims = permute_node.args[1:]
         perm_module = PermuteModule(dims)
         # Replaces the permute method with the module and drops the nodes till quantization node
-        replace_call_function_or_method(self.module, start, permute_node, perm_module, self._get_module_num(), self.rename_nodes_flag)
+        replace_call_function_or_method(self.module, start, permute_node, perm_module, self._get_module_num())
         return None
     
     # Replacement Rules for Flatten
@@ -439,11 +439,13 @@ class TINPUQuantizedReplacementUtils():
         return None
     
     def from_add_relu(self, start: Node, end: Node, with_relu: bool=True):            
-        add_scale, zero_point_1 = self.get_q_params(start, using='prev')
-        input_scale, zero_point_2 = self.get_q_params(start.args[0], using='prev')
-        scale = input_scale / add_scale
-        zero_point = zero_point_1
-        add_relu_block = AddReLUBlock(0, 2**self.activation_bw - 1, scale, zero_point, with_relu, num_bits_scale=self.num_bits_scale)
+        add_scale, zero_point_ = self.get_q_params(start, using='prev')
+        input_scale_1, zero_point_1 = self.get_q_params(start.args[0], using='prev')
+        input_scale_2, zero_point_2 = self.get_q_params(start.args[1], using='prev')
+        if input_scale_1 == input_scale_2:
+            add_relu_block = AddReLUBlock(0, 2**self.activation_bw - 1, input_scale_1/add_scale, zero_point_, with_relu, num_bits_scale=self.num_bits_scale)
+        else:
+            add_relu_block = DQAddReLUBlock(self.activation_bw, add_scale, input_scale_1, input_scale_2, zero_point_, zero_point_1, zero_point_2, with_relu, num_bits_scale=self.num_bits_scale) 
         replace_call_function_or_method(self.module, start, start, add_relu_block, self._get_module_num())
         return None
     
