@@ -472,11 +472,8 @@ if __name__ == '__main__':
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #True, #False
 
-    assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
-        'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
-
+    # Fetch the dataset from CSV_FILE
     X, Y = get_dataset_from_csv(CSV_FILE)
-
     # number of columns in X to be trained
     IN_CHANNELS = X.shape[-1]
     # number of categories to be classified into
@@ -484,6 +481,7 @@ if __name__ == '__main__':
     assert len(CATEGORIES_NAME) == NUM_CATEGORIES, "Incorrect number of categories"
     print(f"Dataset: Samples={X.shape[0]}, Categories={NUM_CATEGORIES}")
 
+    # Prepare the dataloader used for training and testing
     train_loader, test_loader = get_dataloader(X, Y, WINDOW_LENGTH, WINDOW_OFFSET, BATCH_SIZE)
 
     # get example input
@@ -503,7 +501,7 @@ if __name__ == '__main__':
 
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = (NUM_EPOCHS*10) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs = (NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<4) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs,
                 weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, quantization_method=QUANTIZATION_METHOD,
                 quantization_device_type=QUANTIZATION_DEVICE_TYPE)
