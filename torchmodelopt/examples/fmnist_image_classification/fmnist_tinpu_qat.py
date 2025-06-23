@@ -266,29 +266,6 @@ epochs=10
 Wrap the model in the TI quantization module for NPU.
 #####################################################
 '''
-
-'''
-Pass qconfig while wrapping the model to give custom quantization options
-qconfig_type = {
-                'weight': {
-                    'bitwidth': weight_bitwidth,
-                    'qscheme': torch.per_channel_symmetric,
-                    'power2_scale': True, if TINPU and weight_bitwidth == 8
-                    'range_max': None,
-                    'fixed_range': False,
-                    'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
-                },
-                'activation': {
-                    'bitwidth': activation_bitwidth,
-                    'qscheme': torch.per_tensor_symmetric,
-                    'power2_scale': True, if TINPU and weight_bitwidth == 8
-                    'range_max': None,
-                    'fixed_range': False,
-                    'soft_quant': 'default' # 'default' 'soft_tanh'
-                }
-            }
-'''
-
 ti_model = tinpu_quantization.TINPUTinyMLQATFxModule(model, total_epochs=epochs)
 print(ti_model)
 

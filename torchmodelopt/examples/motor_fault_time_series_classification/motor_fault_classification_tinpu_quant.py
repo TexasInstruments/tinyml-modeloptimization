@@ -256,7 +256,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_sigmoid' # 'default' 'soft_tanh'
+                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
             }
         }
     elif weight_bitwidth == 2:
@@ -273,7 +273,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'default' 'soft_tanh'
+                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
             }
         }
     else:
@@ -457,10 +457,10 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     LEARNING_RATE = 0.1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 4 #8 #4 #2
-    ACTIVATION_BITWIDTH = 4 #8 #4 #2
-    QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU' #'TINPU', 'GENERIC'
-    NORMALIZE_INPUT = True #(False if QUANTIZATION_DEVICE_TYPE == 'GENERIC' else True) #True, #False
+    WEIGHT_BITWIDTH = 8 #8 #4 #2
+    ACTIVATION_BITWIDTH = 8 #8 #4 #2
+    QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
+    NORMALIZE_INPUT = True #True, #False
 
     # Fetch the dataset from CSV_FILE
     X, Y = get_dataset_from_csv(CSV_FILE)
