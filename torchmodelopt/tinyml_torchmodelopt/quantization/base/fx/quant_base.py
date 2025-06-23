@@ -257,8 +257,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
                 os.remove(qdq_filename)
             #
         else:
-            torch.onnx.export(model, example_inputs.to(device=device), filename, opset_version=opset_version,
-                              **export_kwargs)
+            torch.onnx.export(model, example_inputs.to(device=device), filename, opset_version=opset_version, **export_kwargs)
         #
         if simplify:
             try:

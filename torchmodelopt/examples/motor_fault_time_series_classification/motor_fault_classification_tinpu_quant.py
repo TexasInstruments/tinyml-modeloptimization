@@ -256,7 +256,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'default' # 'default' 'soft_tanh'
+                'soft_quant': 'soft_sigmoid' # 'default' 'soft_tanh'
             }
         }
     elif weight_bitwidth == 2:
@@ -267,13 +267,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'power2_scale': is_ti_npu,
                 'quant_min': -1,
                 'quant_max': 1,
-                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
+                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'default' # 'default' 'soft_tanh'
+                'soft_quant': 'soft_tanh' # 'default' 'soft_tanh'
             }
         }
     else:
@@ -462,12 +462,8 @@ if __name__ == '__main__':
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = True #(False if QUANTIZATION_DEVICE_TYPE == 'GENERIC' else True) #True, #False
 
-    # TODO: implement convert for GENERIC model and remove this assert.
-    # assert QUANTIZATION_DEVICE_TYPE != 'GENERIC' or (not NORMALIZE_INPUT), \
-    #     'normalizing input with BatchNorm is not supported for the export format used for Generic Quantization. Please set NORMALIZE_INPUT to False.'
-
+    # Fetch the dataset from CSV_FILE
     X, Y = get_dataset_from_csv(CSV_FILE)
-
     # number of columns in X to be trained
     IN_CHANNELS = X.shape[-1]
     # number of categories to be classified into
@@ -475,6 +471,7 @@ if __name__ == '__main__':
     assert len(CATEGORIES_NAME) == NUM_CATEGORIES, "Incorrect number of categories"
     print(f"Dataset: Samples={X.shape[0]}, Categories={NUM_CATEGORIES}")
 
+    # Prepare the dataloader used for training and testing
     train_loader, test_loader = get_dataloader(X, Y, WINDOW_LENGTH, WINDOW_OFFSET, BATCH_SIZE)
 
     # get example input
