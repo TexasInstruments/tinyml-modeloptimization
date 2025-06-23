@@ -35,6 +35,14 @@ class QDQModule(torch.nn.Module):
         x = self.dq(x)
         return x   
 
+class PermuteModule(torch.nn.Module):
+    def __init__(self, perm):
+        super().__init__()
+        self.perm = perm
+
+    def forward(self, x):
+        return x.permute(self.perm)
+
 class AdaptiveAvgPool2d(torch.nn.Module):
     def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
         super().__init__()
@@ -90,6 +98,33 @@ class AddReLUBlock(torch.nn.Module):
             y = self.clip(y)
         return y
 
+class DQAddReLUBlock(torch.nn.Module):
+    def __init__(self, activation_bw, add_scale, is1, is2, zp, zp1, zp2, with_relu, num_bits_scale=1):
+        super().__init__()
+        self.with_relu = with_relu
+        self.zp = zp
+        self.zp1 = zp1
+        self.zp2 = zp2
+        self.num_bits_scale = num_bits_scale
+        self.dq1 = MultiplyModule(is1)
+        self.dq2 = MultiplyModule(is2)
+        self.qdq = QDQModule(1/add_scale, 1)
+        self.relu = torch.nn.ReLU()
+        min_relu_clip = -2**(activation_bw - 1) if zp else 0
+        max_relu_clip = 2**(activation_bw - 1) - 1 if zp else 2**activation_bw - 1
+        self.clip = torch.nn.Hardtanh(min_relu_clip, max_relu_clip)
+
+    def forward(self, x, y):
+        x = self.dq1(x - self.zp1)
+        y = self.dq2(y - self.zp2)
+        out = x + y
+        out = self.qdq(out)
+        y = out + self.zp
+        if self.with_relu:
+            y = self.relu(y)
+            y = self.clip(y)
+        return y
+    
 class AddReLUWithBias(torch.nn.Module):
     def __init__(self, bias, min_relu_clip: int, max_relu_clip: int, scale: torch.Tensor, zero_point: torch.Tensor, with_relu: bool = False, num_bits_scale: int = 1):
         super().__init__()
