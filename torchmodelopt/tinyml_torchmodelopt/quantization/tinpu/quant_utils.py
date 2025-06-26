@@ -15,6 +15,7 @@ class TINPUQuantizedReplacementUtils():
         self.activation_bw = activation_bw
         self.num_bits_scale = 1 if power2_scale else 8
         self.rename_nodes_flag = False
+        self.float_ops = [] # [(4, 4), (2, 8)]
 
         if self._check_module_before_quant():
             nodes = self._get_nodes()
@@ -235,6 +236,8 @@ class TINPUQuantizedReplacementUtils():
         # Quantized Batch Normalization Module
         qbn_module = self._get_named_modules()[end.target]
         bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
+        q_scale = getattr(self.module, start.args[1].target)
+        qdq_module = QDQModule(1/q_scale, q_scale)
 
         scale = qbn_module.scale
         zero_point = qbn_module.zero_point
@@ -248,7 +251,10 @@ class TINPUQuantizedReplacementUtils():
         # for BN represented as offset, scale and shift, the scale can be an 8bit quantity        
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(bn_offset, bn_scale, num_bits_scale=8)
         normalize_input = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
-        qbn_module = torch.nn.Sequential(normalize_input)
+        if len(self.float_ops):
+            qbn_module = torch.nn.Sequential(qdq_module, normalize_input)
+        else:
+            qbn_module = normalize_input
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
         replace_call_function_or_method(self.module, start, end, qbn_module, self._get_module_num())
         return None
@@ -282,8 +288,8 @@ class TINPUQuantizedReplacementUtils():
         bias = qconvrelu_module.bias()
 
         qbias = ((bias / bias_scale) + bias_zero_point).float().detach()
-        round_offset = qconvrelu_module.scale/2
-        int_bias = (self.weight_bw, self.activation_bw) not in []
+        round_offset = qconvrelu_module.scale / 2 / acc_scale.float().detach()
+        int_bias = (self.weight_bw, self.activation_bw) not in self.float_ops
         if int_bias:
             if per_channel:
                 qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
@@ -329,17 +335,20 @@ class TINPUQuantizedReplacementUtils():
         bias_zero_point = weight_zero_point
         bias = qlinear_module.bias()
 
-        # qbias = (torch.round(bias / bias_scale) + bias_zero_point).float()
-        if per_channel:
-            qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
-        else:
-            qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
-        
-        qbias = qbias.int_repr()
+        qbias = ((bias / bias_scale) + bias_zero_point).float().detach()
+        round_offset = qlinear_module.scale / 2 / acc_scale.float().detach()
+        int_bias = (self.weight_bw, self.activation_bw) not in self.float_ops
+        if int_bias:
+            if per_channel:
+                qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+            else:
+                qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+            qbias = qbias.int_repr()
+            round_offset = None
 
         # conv_module.bias.data.copy_(qbias)
         relative_mult = (acc_scale / qlinear_module.scale).float()
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult, num_bits_scale=self.num_bits_scale)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult, round_offset, int_bias=int_bias, num_bits_scale=self.num_bits_scale)
 
         if with_relu:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 2**self.activation_bw - 1, ndim=2, dim=1)

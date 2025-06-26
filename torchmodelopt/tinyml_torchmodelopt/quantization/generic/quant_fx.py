@@ -120,7 +120,7 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
     def replacement_rules(self, replacement_utils: GENERICQuantizedReplacementUtils) -> List[Tuple]:
         # List to store the pattern and corresponding replacement function
         replacement_rules = [
-            ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_q_qbn),
+            (['permute', 'unsqueeze'], replacement_utils.from_permute),
         ]
         return replacement_rules
 

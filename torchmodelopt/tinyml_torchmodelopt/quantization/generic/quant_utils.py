@@ -20,6 +20,7 @@ class GENERICQuantizedReplacementUtils():
         self._propagate_quant_params()
         if self.rename_nodes_flag:
             self.rename_nodes()
+        self.from_first_layer()
 
     def _get_nodes(self) -> List[Node]:
         return list(self.module.graph.nodes)
@@ -167,6 +168,82 @@ class GENERICQuantizedReplacementUtils():
         add_node_after_node(self.module, main_node, quant_node)
         return None
 
+    def _find_first_quant_node(self):
+        first_quant_node = []
+        nodes = self._get_nodes()
+        named_modules = self._get_named_modules()
+
+        placeholder_node = nodes[0]
+        # add the placeholder node in bfs queue
+        bfs = [placeholder_node]
+
+        while bfs.__len__() != 0:
+            node = bfs[0]
+            bfs.pop(0)
+            # check if the node is a quant node, if not 
+            # find where it is present recursively after placeholder
+            if is_both_node_equal(named_modules, node, torch.quantize_per_tensor):
+                first_quant_node.append(node)
+            else:
+                bfs += list(node.users)
+        return first_quant_node
+    
+
+    # for the initial layers handling quantize_per_tensor
+    def from_first_layer(self):
+        first_quant_nodes = self._find_first_quant_node()
+
+        for first_quant_node in first_quant_nodes:
+            user = list(first_quant_node.users)[0]
+            named_modules = self._get_named_modules()
+
+            if is_both_node_equal(named_modules, user, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d):
+                self.from_q_qbn(first_quant_node, user)
+            elif is_both_node_equal(named_modules, user, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d):
+                self.from_q_id(first_quant_node, user)
+            elif is_both_node_equal(named_modules, user, torch.nn.Identity):
+                self.from_q(first_quant_node, user)
+            else:
+                pass
+        return None
+    
+    # Replacement Rules for quantized node at starting
+    def from_q(self, start: Node, end: Node):
+        # Quantization Node
+        q_node = start
+        scale = getattr(self.module, q_node.args[1].target)
+        zero_point = getattr(self.module, q_node.args[2].target)
+        # OSS Module
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
+        oss_module = GENERICOffsetScaleShift(oss_offset, oss_scale, oss_shift, 1.0, 0, -(2**(self.activation_bw - 1)), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
+        # Replace quantize function with OSS Module
+        replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
+        return None
+
+    def from_q_id(self, start: Node, end: Node):
+        self.from_q(start, start)
+        return None
+    
+    def from_qbn(self, start: Node, end: Node):
+        # Quantized Batch Normalization Module
+        qbn_module = self._get_named_modules()[end.target]
+        bn_sigma = torch.sqrt(qbn_module.running_var + qbn_module.eps)
+
+        scale = qbn_module.scale
+        zero_point = qbn_module.zero_point
+
+        bn_offset = (- qbn_module.running_mean + qbn_module.bias * bn_sigma / qbn_module.weight)
+        # first get the effective weight due to batchnorm
+        combined_weight = (qbn_module.weight / bn_sigma)
+        # then modify the weight by output scale so that the output is converted to output scale
+        bn_scale = combined_weight
+        # OSS Module
+        # for BN represented as offset, scale and shift, the scale can be an 8bit quantity        
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(bn_offset, bn_scale, num_bits_scale=8)
+        normalize_input = GENERICOffsetScaleShift(oss_offset, oss_scale, oss_shift, scale, zero_point, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
+        # Remove the scale, zero_point, quantize method and bn layer with OSS Module
+        replace_call_function_or_method(self.module, start, end, normalize_input, self._get_module_num())
+        return None
 
     def from_q_qbn(self, start: Node, end: Node):
         # Quantized Batch Normalization Module
@@ -184,8 +261,15 @@ class GENERICQuantizedReplacementUtils():
         # OSS Module
         # for BN represented as offset, scale and shift, the scale can be an 8bit quantity        
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(bn_offset, bn_scale, num_bits_scale=8)
-        normalize_input = GENERICOffsetScaleShift(oss_offset, oss_scale, oss_shift, scale, zero_point*0, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
+        normalize_input = GENERICOffsetScaleShift(oss_offset, oss_scale, oss_shift, scale, zero_point, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
         qbn_module = torch.nn.Sequential(normalize_input)
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
         replace_call_function_or_method(self.module, start, end, qbn_module, self._get_module_num())
+        return None
+    
+    def from_permute(self, start: Node, end: Node):
+        q_node = start.args[0]
+        scale = getattr(self.module, q_node.args[1].target)
+        zp = getattr(self.module, q_node.args[2].target)
+        replace_call_function_or_method(self.module, start, end, PermBlock(scale, zp), self._get_module_num())
         return None

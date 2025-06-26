@@ -35,5 +35,17 @@ class GENERICOffsetScaleShift(torch.nn.Module):
             y = torch.floor(y).clamp(min=self.quant_min, max=self.quant_max)
         else:
             y = torch.round(y).clamp(min=self.quant_min, max=self.quant_max)
-        y = torch.quantize_per_tensor(y, self.scale, self.zp, torch.qint8)
+        y = torch.quantize_per_tensor(y, self.scale, self.zp, torch.quint8)
         return y
+
+class PermBlock(torch.nn.Module):
+    def __init__(self, scale, zp):
+        super().__init__()
+        self.scale = scale
+        self.zp = zp
+    def forward(self, x):
+        x = x.dequantize()
+        x = x.permute(0, 2, 1)
+        x = x.unsqueeze(-1)
+        x = torch.quantize_per_tensor(x, self.scale, self.zp, torch.quint8)
+        return x
