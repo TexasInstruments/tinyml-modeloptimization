@@ -199,10 +199,6 @@ class GENERICQuantizedReplacementUtils():
 
             if is_both_node_equal(named_modules, user, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d):
                 self.from_q_qbn(first_quant_node, user)
-            elif is_both_node_equal(named_modules, user, torch.ao.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d):
-                self.from_q_id(first_quant_node, user)
-            elif is_both_node_equal(named_modules, user, torch.nn.Identity):
-                self.from_q(first_quant_node, user)
             else:
                 pass
         return None

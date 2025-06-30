@@ -72,6 +72,7 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.weight_bw = qconfig_type['weight']['bitwidth']
         self.activation_bw = qconfig_type['activation']['bitwidth']
         self.power2_scale = qconfig_type['weight']['power2_scale']
+        self.float_ops = kwargs.get('float_ops', False)
 
         # qconfig_type = None is equivalent to WC8AT8 (or DEFAULT) which uses per_tensor_affine
         # Note: activation qscheme=torch.per_tensor_affine can be converted onnx model with QOperator using onnxruntime optimization

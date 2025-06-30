@@ -101,7 +101,8 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.activation_bw = qconfig_type['activation']['bitwidth']
         self.power2_scale = qconfig_type['weight']['power2_scale']
         self.output_dequantize = output_dequantize
-        
+        self.float_ops = kwargs.get('float_ops', False)
+
         if self.weight_bw >= 8:
             assert self.power2_scale is True, 'for 8bit quantization, power2_scale must be set to True'
         else:
@@ -201,7 +202,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         # Convert the module using symbolic trace
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
         # Get the replacement rules to change the pattern
-        replacement_utils = TINPUQuantizedReplacementUtils(module, self.weight_bw, self.activation_bw, self.power2_scale)
+        replacement_utils = TINPUQuantizedReplacementUtils(module, self.weight_bw, self.activation_bw, self.power2_scale, self.float_ops)
         replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_dequantize)
         # Replace the patterns using the replacement function
         for replacement_pattern, replacement_function in replacement_rules:

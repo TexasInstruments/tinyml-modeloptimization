@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 from .quant_modules import *
 
 class TINPUQuantizedReplacementUtils():
-    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool):
+    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool, float_ops: bool):
 
         self.module: GraphModule = model
         self.graph_quant_params: Dict[str, Dict] = dict()
@@ -15,7 +15,13 @@ class TINPUQuantizedReplacementUtils():
         self.activation_bw = activation_bw
         self.num_bits_scale = 1 if power2_scale else 8
         self.rename_nodes_flag = False
-        self.float_ops = [] # [(4, 4), (2, 8)]
+        self.float_ops = float_ops
+        
+        if self.float_ops:
+            self.float_ops = [(2, 2), (2, 4), (2, 8), (4, 2), (4, 4), (4, 8), (8, 2), (8, 4), (8, 8)]
+        else:
+            self.float_ops = [] # [(2, 2), (2, 4), (2, 8), (4, 2), (4, 4), (4, 8), (8, 2), (8, 4), (8, 8)]
+
 
         if self._check_module_before_quant():
             nodes = self._get_nodes()
@@ -222,7 +228,7 @@ class TINPUQuantizedReplacementUtils():
         scale = getattr(self.module, q_node.args[1].target)
         zero_point = getattr(self.module, q_node.args[2].target)
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=8)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, int_bias=False, num_bits_scale=8)
         oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -(2**(self.activation_bw - 1)), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
         # Replace quantize function with OSS Module
         replace_call_function_or_method(self.module, start, end, oss_module, self._get_module_num())
@@ -249,10 +255,11 @@ class TINPUQuantizedReplacementUtils():
         bn_scale = combined_weight / scale
         # OSS Module
         # for BN represented as offset, scale and shift, the scale can be an 8bit quantity        
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(bn_offset, bn_scale, num_bits_scale=8)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(bn_offset, bn_scale, int_bias=False, num_bits_scale=8)
         normalize_input = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**(self.activation_bw - 1), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
         if len(self.float_ops):
-            qbn_module = torch.nn.Sequential(qdq_module, normalize_input)
+            # qbn_module = torch.nn.Sequential(qdq_module, normalize_input)
+            qbn_module = normalize_input
         else:
             qbn_module = normalize_input
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
@@ -296,7 +303,6 @@ class TINPUQuantizedReplacementUtils():
             else:
                 qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
             qbias = qbias.int_repr()
-            round_offset = None
 
         # conv_module.bias.data.copy_(qbias)
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
@@ -315,7 +321,7 @@ class TINPUQuantizedReplacementUtils():
         self.from_qconv_relu(start, start, with_relu)
         return None
     
-    def from_qlinear(self, start: Node, end: Node, with_relu: bool=False):
+    def from_qlinear_relu(self, start: Node, end: Node, with_relu: bool=True):
         qlinear_module = self._get_named_modules()[start.target]
         linear_module = torch.nn.Linear(qlinear_module.in_features, qlinear_module.out_features, bias=False)
 
@@ -344,7 +350,6 @@ class TINPUQuantizedReplacementUtils():
             else:
                 qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
             qbias = qbias.int_repr()
-            round_offset = None
 
         # conv_module.bias.data.copy_(qbias)
         relative_mult = (acc_scale / qlinear_module.scale).float()
@@ -359,8 +364,8 @@ class TINPUQuantizedReplacementUtils():
         replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
         return None
 
-    def from_qlinear_relu(self, start: Node, end: Node):
-        self.from_qlinear(start, end, with_relu=True)
+    def from_qlinear(self, start: Node, end: Node):
+        self.from_qlinear_relu(start, end, with_relu=False)
         return None
 
     def get_values_from_initializer(self, start: Node) -> torch.Tensor:

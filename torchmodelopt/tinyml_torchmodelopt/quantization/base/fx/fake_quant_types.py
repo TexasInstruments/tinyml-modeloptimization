@@ -29,8 +29,6 @@
 #
 #################################################################################
 
-import warnings
-import copy
 import torch
 import torch.ao.quantization
 
@@ -84,32 +82,21 @@ class SoftSigmoidFakeQuantize(torch.ao.quantization.fake_quantize.FakeQuantize):
 
         if self.training:
             # Apply smooth quantization
-
-            #
             if self.is_per_channel:
                 scale = self.scale.clone().unsqueeze(-1)
                 zero_point = self.zero_point.clone().unsqueeze(-1)
             else:
                 scale = self.scale.clone()
                 zero_point = self.zero_point.clone()
-            #
-
-            dataflat = X.reshape(X.shape[0], -1)
-            data_normalized = (dataflat / scale) + zero_point
-            data_soft_quant = self.soft_round(data_normalized)
+            # Simulate QDQ using soft round
+            data_flatten = X.reshape(X.shape[0], -1)
+            data_quantized = (data_flatten / scale) + zero_point
+            data_soft_quant = self.soft_round(data_quantized)
             data_soft_clamped = torch.clamp(data_soft_quant, min=self.quant_min, max=self.quant_max)
-            data_soft_dequant = (data_soft_clamped - zero_point) * scale
-            qdata_soft = data_soft_dequant.reshape(X.shape)
-            '''
-            Include super().forward() ouput in computation graph, to make sure gradient is properly handled
-            '''
-            output = qdata_soft
+            data_soft_dequantized = (data_soft_clamped - zero_point) * scale
+            quantized_data_soft = data_soft_dequantized.reshape(X.shape)
+            output = quantized_data_soft
         else:
-            # data_hard_quant = self.hard_round(data_normalized)
-            # data_hard_clamped = torch.clamp(data_hard_quant, min=self.quant_min, max=self.quant_max)
-            # data_hard_dequant = (data_hard_clamped - self.zero_point.unsqueeze(-1)) * self.scale.unsqueeze(-1)
-            # qdata_hard = data_hard_dequant.reshape(X.shape)
-            # output = qdata_hard
             output = Y
 
         return output
@@ -139,6 +126,9 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
         """
         # Ensure alpha is at least eps to avoid numerical issues and NaNs.
         # This is important for the gradient of torch.where below.
+        import warnings
+        from torch.jit import TracerWarning
+        warnings.filterwarnings("ignore", category=TracerWarning)
         temperature_bounded = torch.maximum(
             torch.tensor(temperature, dtype=x.dtype, device=x.device),  # Convert alpha to tensor if needed
             torch.tensor(eps, dtype=x.dtype, device=x.device)     # Minimum threshold
@@ -146,16 +136,12 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
 
         # Compute the midpoint between two integers (e.g., 2.5 for x in [2,3))
         m = self.floor_ste(x) + 0.5
-
         # Compute the residual distance from x to the midpoint
         r = x - m
-
         # Compute a scaling factor for the tanh output, which depends on alpha
         z = torch.tanh(temperature_bounded / 2.0) * 2.0
-
         # The core soft-rounding formula: smoothly interpolate between floor and ceil
         y = m + torch.tanh(temperature_bounded * r) / z
-
         # For very low alphas, soft_round behaves like identity (no rounding)
         if isinstance(temperature, torch.Tensor):
             # If alpha is a tensor, create a mask where alpha < eps and use x there, otherwise use y
@@ -176,14 +162,13 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
             else:
                 scale = self.scale.clone()
                 zero_point = self.zero_point.clone()
-            #
-            
-            dataflat = X.view(X.size(0), -1)
-            data_normalized = (dataflat / scale) + zero_point
-            data_round = self.soft_round(data_normalized, self.temperature)
-            data_quant = torch.clamp(data_round, self.quant_min, self.quant_max)
-            data_dequant = (data_quant - zero_point) * scale
-            data_dequant = data_dequant.view(X.size())
-            return data_dequant
+            # Simulate QDQ using soft round and temperature
+            data_flatten = X.view(X.size(0), -1)
+            data_quantized = (data_flatten / scale) + zero_point
+            data_round = self.soft_round(data_quantized, self.temperature)
+            data_quantized = torch.clamp(data_round, self.quant_min, self.quant_max)
+            data_dequantized = (data_quantized - zero_point) * scale
+            data_dequantized = data_dequantized.view(X.size())
+            return data_dequantized
         else:
             return Y
