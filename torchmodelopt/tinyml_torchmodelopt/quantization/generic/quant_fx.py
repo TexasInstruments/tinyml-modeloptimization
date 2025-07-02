@@ -72,6 +72,7 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.weight_bw = qconfig_type['weight']['bitwidth']
         self.activation_bw = qconfig_type['activation']['bitwidth']
         self.power2_scale = qconfig_type['weight']['power2_scale']
+        self.float_ops = kwargs.get('float_ops', False)
 
         # qconfig_type = None is equivalent to WC8AT8 (or DEFAULT) which uses per_tensor_affine
         # Note: activation qscheme=torch.per_tensor_affine can be converted onnx model with QOperator using onnxruntime optimization
@@ -120,7 +121,7 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
     def replacement_rules(self, replacement_utils: GENERICQuantizedReplacementUtils) -> List[Tuple]:
         # List to store the pattern and corresponding replacement function
         replacement_rules = [
-            ([torch.quantize_per_tensor, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_q_qbn),
+            (['permute', 'unsqueeze'], replacement_utils.from_permute),
         ]
         return replacement_rules
 
