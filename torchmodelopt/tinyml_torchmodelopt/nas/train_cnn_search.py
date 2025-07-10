@@ -22,7 +22,7 @@ def search_and_get_model(args):
 
     # Check for GPU availability
     if not torch.cuda.is_available():
-        logger.error('no GPU available for NAS')
+        logger.error('Since no GPU is available, NAS will not be performed. NAS is a highly compute intensive operation, and might completely clog your CPU')
         # print('no GPU available')
         return None
     
