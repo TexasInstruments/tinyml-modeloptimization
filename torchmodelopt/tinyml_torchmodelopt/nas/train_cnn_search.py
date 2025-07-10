@@ -1,4 +1,4 @@
-import sys
+import time
 import torch
 import logging
 import torch.nn as nn
@@ -76,7 +76,7 @@ def search_and_get_model(args):
     # Main NAS loop
     for epoch in range(args.nas_budget):
         lr = scheduler.get_last_lr()[0]  # Get current learning rate
-        logger.info('Epoch %d lr %e', epoch, lr)
+        logger.info('Epoch %d lr %f', epoch, lr)
         # print(f'Epoch: {epoch} \t LR: {lr}')
         
         genotype = model.genotype()      # Get current architecture genotype
@@ -87,13 +87,13 @@ def search_and_get_model(args):
         # print(F.softmax(model.alphas_reduce, dim=-1))
         
         # Training step (updates model weights and architecture parameters)
-        train_acc = train(args, train_loader, valid_loader, model, architect, criterion, optimizer, lr)
-        logger.info('train_acc %f', train_acc)
+        train_acc = train(args, epoch, train_loader, valid_loader, model, architect, criterion, optimizer, lr)
+        logger.info('Train:  Acc@1 %f', train_acc)
         # print('train_acc:', train_acc)
         
         # Validation step (evaluate current architecture)
-        valid_acc = infer(args, valid_loader, model, criterion)
-        logger.info('valid_acc %f', valid_acc)
+        valid_acc = infer(args, epoch, valid_loader, model, criterion)
+        logger.info('Test:  Acc@1 %f', valid_acc)
         # print('valid_acc: ', valid_acc)
 
         best_genotype = genotype  # Update best genotype (could add selection logic)
@@ -114,7 +114,7 @@ def search_and_get_model(args):
 
     return eval_model
 
-def train(args, train_loader, valid_loader, model, architect, criterion, optimizer, lr):
+def train(args, epoch, train_loader, valid_loader, model, architect, criterion, optimizer, lr):
     """
     Performs one epoch of training for NAS.
     Args:
@@ -132,6 +132,9 @@ def train(args, train_loader, valid_loader, model, architect, criterion, optimiz
     logger = logging.getLogger("root.modelopt.nas.train")
     objs = AvgrageMeter()  # Tracks average loss
     top1 = AvgrageMeter()  # Tracks average top-1 accuracy
+
+    start_time = time.time()
+    torch.cuda.reset_peak_memory_stats()
     
     for step, (input_raw, input, target) in enumerate(train_loader):
         model.train()  # Set model to training mode
@@ -165,12 +168,20 @@ def train(args, train_loader, valid_loader, model, architect, criterion, optimiz
         top1.update(prec1.item(), n) # Update average accuracy
         
         if step % 50 == 0:
-            logger.info('train batch: %03d loss: %e acc1: %f', step, objs.avg, top1.avg)
+            elapsed = time.time() - start_time
+            samples = (step + 1) * input.size(0)
+            samples_per_sec = samples / elapsed
+            step_time = elapsed / (step + 1)
+            max_mem_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+            estimated_total = elapsed / (step + 1) * len(train_loader)
+            eta_seconds = max(0, estimated_total - elapsed)
+            eta_str = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
+            logger.info('Epoch: [%d]  [%03d/%03d]  eta: %s  lr: %f  samples/s: %f  loss: %.2f  acc1: %.2f  time: %f  max_mem: %f', epoch, step, len(train_loader), eta_str, lr, samples_per_sec, objs.avg, top1.avg, step_time, max_mem_mb)
             # print(f'train {round(step, 3)} {objs.avg} {top1.avg}')
         
     return top1.avg  # Return average top-1 accuracy
 
-def infer(args, valid_loader, model, criterion):
+def infer(args, epoch, valid_loader, model, criterion):
     """
     Evaluates the model on the validation set.
     Args:
@@ -186,6 +197,9 @@ def infer(args, valid_loader, model, criterion):
     top1 = AvgrageMeter()  # Tracks average top-1 accuracy
     model.eval()           # Set model to evaluation mode
 
+    start_time = time.time()
+    torch.cuda.reset_peak_memory_stats()
+
     for step, (input_raw, input, target) in enumerate(valid_loader):
         with torch.no_grad():
             input = input.cuda().float()   # Move input to GPU
@@ -200,8 +214,16 @@ def infer(args, valid_loader, model, criterion):
         top1.update(prec1.item(), n)       # Update average accuracy
 
         if step % 50 == 0:
-            logger.info('valid batch: %03d loss: %e acc1: %f', step, objs.avg, top1.avg)
-            # print(f'valid {round(step, 3)} {objs.avg} {top1.avg}')
+            elapsed = time.time() - start_time
+            samples = (step + 1) * input.size(0)
+            samples_per_sec = samples / elapsed
+            step_time = elapsed / (step + 1)
+            max_mem_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+            estimated_total = elapsed / (step + 1) * len(valid_loader)
+            eta_seconds = max(0, estimated_total - elapsed)
+            eta_str = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
+            logger.info('Epoch: [%d]  [%03d/%03d]  eta: %s  samples/s: %f  loss: %.2f  acc1: %.2f  time: %f  max_mem: %f', epoch, step, len(valid_loader), eta_str, samples_per_sec, objs.avg, top1.avg, step_time, max_mem_mb)
+        # print(f'valid {round(step, 3)} {objs.avg} {top1.avg}')
 
     return top1.avg  # Return average top-1 accuracy
 
