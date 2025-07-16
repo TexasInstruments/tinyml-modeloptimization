@@ -76,7 +76,7 @@ def search_and_get_model(args):
     # Main NAS loop
     for epoch in range(args.nas_budget):
         lr = scheduler.get_last_lr()[0]  # Get current learning rate
-        logger.info('Epoch %d lr %f', epoch, lr)
+        # logger.info('Epoch %d lr %f', epoch, lr)
         # print(f'Epoch: {epoch} \t LR: {lr}')
         
         genotype = model.genotype()      # Get current architecture genotype
