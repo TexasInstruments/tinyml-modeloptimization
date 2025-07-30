@@ -1,30 +1,113 @@
-# Tiny ML Model Optimization
+## Using Quantization Wrappers for your PyTorch model
 
-## Overview
+This repository helps you to quantize your model to formats that can run optimally on TI's MCUs
 
-Tiny ML Model Optimization is the toolkit for optimizing models. It offers an extensive set of operations to boost your model performance. In life cycle of model, from training, optimizing to deploying and inference, this repository helps in the optimization phase. 
+**Note**: Please consult the device and SDK documentation to understand whether Hardware based TI NPU acceleration is supported in that device. 
 
-The key features of Model Optimization:
+### 1. C2000 / ARM devices with Hardware based TI NPU acceleration (TINPUTinyMLQATFxModule / TINPUTinyMLPTQFxModule )
 
-**Basic**
-- 8bit/4bit/2bit quantization
-- Quantization Aware Training / Post Training Quantization
-- Convert modules to leverage TI's NPU power
-- Perform Inference on exported ONNX
+- TINPUTinyMLQATFxModule / TINPUTinyMLPTQFxModule is a PyTorch module that incorporates the constraints of TI NPU Hardware accelerator. We call this a wrapper as it wraps your PyTorch module and induces the constraints of the hardware.
+- It can be imported as follows.
+from tinyml_torchmodelopt.quantization import TINPUTinyMLQATFxModule
 
-**Advanced**
-- Mixed Precision
-- Calibrating Bias with Bias Calibration Factor
+The following is a sample usage of how to incorporate this module. 
 
-Using the tinyml-modeloptimization toolkit can be challenging and overwhelming for users. The example directory is designed to help users get started, guiding them from basic to advanced usage.
+```python
+from tinyml_torchmodelopt.quantization import TINPUTinyMLQATFxModule, TINPUTinyMLPTQFxModule
 
-| Example     |  Dataset          | Description |
-|:-----------------------:|:---------------:| :----: |
-|[Image classification](./fmnist_image_classification)|[Fashion MNIST Dataset](https://pytorch.org/vision/stable/generated/torchvision.datasets.FashionMNIST.html) | Simple Example, Dataloader from torch.datasets, LinearRelu NN Model, QAT, Supports TI-NPU, Renaming node, ONNX Inference |
-|[Time series classification](./motor_fault_time_series_classification)| [Motor Fault Dataset](./motor_fault_time_series_classification/motor_fault_dataset.csv) | Dataloader from CSV, QAT/PTQ, 2b/4b/8b Weights, CNN Model, ONNX Inference |
-|[Audio Keyword Spotting](./audio_keyword_spotting)| [SpeechCommands Dataset](https://www.tensorflow.org/datasets/catalog/speech_commands) | Extensive Example, Dataloader from tensorflow dataset, DSCNN Model, Perform PTQ, Mixed Precision, Bias Calibration |
+# create your model here:
+model = ...
+
+# load your pretrained checkpoint/weights here or run your usual floating-point training
+pretrained_data = torch.load(pretrained_path)
+model.load_state_dict(pretrained_data)
+
+# wrap your model in TINPUTinyMLQATFxModule / TINPUTinyMLPTQFxModule
+model = TINPUTinyMLQATFxModule(model, total_epochs=epochs)
+# model = TINPUTinyMLPTQFxModule(model, total_epochs=epochs)
+
+# train the wrapped model in your training loop here with loss, backward, optimizer, etc.
+# your usual training loop
+model.train()
+for e in range(epochs):
+    for images, target in my_dataset_train:
+        output = model(images)
+        # loss, backward(), optimizer step, etc comes here as usual in training
+
+model.eval()
+
+# convert the model to operate with integer operations (instead of QDQ FakeQuantize operations)
+model = model.convert()
+
+# create a dummy input - this is required for onnx export - will change depending on your model.
+dummy_input = torch.rand((1,1,256,1))
+
+# export the quantized model to onnx format
+model.export(dummy_input, os.path.join(save_path,'model_int8.onnx'), input_names=['input'])
+```
 
 
+### 2. C2000 / ARM MCUs without using Hardware based TI NPU acceleration (GenericTinyMLQATFxModule / GenericTinyMLPTQFxModule)
+
+- GenericTinyMLQATFxModule / GenericTinyMLPTQFxModule is a PyTorch module that incorporates the constraints of typical INT8 quantization in PyTorch. This makes use of the PyTorch quantization APIs, but makes it easy to do QAT with minimal code changes. For more details of [PyTorch quantization, see its documentation](https://pytorch.org/docs/stable/quantization.html)
+- The wrapper module can be imported as follows.
+from tinyml_torchmodelopt.quantization import GenericTinyMLQATFxModule
+
+The following is a sample usage of how to incorporate this module. 
+
+```python
+from tinyml_torchmodelopt.quantization import GenericTinyMLQATFxModule, GenericTinyMLPTQFxModule
+
+# create your model here:
+model = ...
+
+# load your pretrained checkpoint/weights here or run your usual floating-point training
+pretrained_data = torch.load(pretrained_path)
+model.load_state_dict(pretrained_data)
+
+# wrap your model in GenericTinyMLQATFxModule / GenericTinyMLPTQFxModule
+model = GenericTinyMLQATFxModule(model, total_epochs=epochs)
+# model = GenericTinyMLPTQFxModule(model, total_epochs=epochs)
+
+# train the wrapped model in your training loop here with loss, backward, optimizer, etc.
+# your usual training loop
+model.train()
+for e in range(epochs):
+    for images, target in my_dataset_train:
+        output = model(images)
+        # loss, backward(), optimizer step, etc comes here as usual in training
+
+model.eval()
+
+# convert the model to operate with integer operations (instead of QDQ FakeQuantize operations)
+model = model.convert()
+
+# create a dummy input - this is required for onnx export - will change depending on your model.
+dummy_input = torch.rand((1,1,256,1))
+
+# export the quantized model to onnx format
+model.export(dummy_input, os.path.join(save_path,'model_int8.onnx'), input_names=['input'])
+```
+
+### Evaluate your Model before running on device
+
+You can now use `model` for evaluation before compiling and running on device
+
+```python
+import onnxruntime as ort
+
+model_name = 'model_int8.onnx'
+example_input = torch.rand((1,1,256,1))
+
+ort_session_options = ort.SessionOptions()
+ort_session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+
+ort_session = ort.InferenceSession(model_name, ort_session_options)
+prediction = ort_session.run(None, {INPUT_NAME: example_input})
+
+print(prediction)
+```
 
 
-
+## Examples for Training and Quantization
+Detailed examples for using this repository is present at [examples](./examples/). From simple to advanced examples are provided. You can select the example based on what you are looking for.
