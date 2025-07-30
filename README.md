@@ -29,7 +29,7 @@ The repository provides the following features:
 3. **PTQ/QAT**: Different quantization methods like PTQ and QAT are supported
 4. **ONNX Models**: Quantized models are exported as ONNX structure which can be easily compiled and run on device
 
-Examples for using this repository is present at [Examples](./torchmodelopt/examples/) and for compilation of ONNX Models using TVM Compiler at [Compilation](https://jenkins-sdomc.dal.design.ti.com/job/build-tvm-tinie/lastSuccessfulBuild/artifact/bem/neo-tvm/ti_docs/build/compiling.html)
+Examples for using this repository is present at [Examples](./torchmodelopt/examples/) and for compilation of ONNX Models using TVM Compiler at [Compilation](https://software-dl.ti.com/mctools/nnc/mcu/users_guide/index.html)
 
 ## Directory Structure
 
@@ -61,73 +61,5 @@ tinyml-modeloptimization/
 ```
 
 **Note**: Some files and folders are not represented in this dir structure to avoid cluttering and removing unnecessary information.
-
-## Wrappers Provided
-
-### 1. Base Wrapper for Native PyTorch Quantization
-* **TinyMLQuantFxBaseModule**
-    - Base class for Generic and TINPU wrappers
-    - Model is present in ONNX Format
-    - Quantized according to **is_qat** option
-
-### 2. GENERIC Wrappers for CPU Quantization
-* **GenericTinyMLQATFxModule** & **GenericTinyMLPTQFxModule**
-    - Runs on CPU
-    - Model is present in ONNX QDQ Format
-    - Quantized according to QAT/PTQ
-
-### 3. TINPU Wrappers for NPU Quantization
-* **TINPUTinyMLQATFxModule** & **TINPUTinyMLPTQFxModule**
-    - Runs on NPU
-    - Model is present in ONNX TINPU Format
-    - Quantized according to QAT/PTQ
-
-
-## Options present in TinyMLQuantFxBaseModule
-
-```python
-
-ti_model = TinyMLQuantFxBaseModule(model, 
-                                   qconfig_type=None,
-                                   example_inputs=None, 
-                                   is_qat=True, 
-                                   backend="qnnpack",
-                                   total_epochs=0, 
-                                   num_batch_norm_update_epochs=None, 
-                                   num_observer_update_epochs=False,
-                                   prepare_qdq=True,
-                                   bias_calibration_factor=0.0, 
-                                   verbose=True, 
-                                   float_ops=False)
-
-```
-
-#### Argument Descriptions
-
-| Argument                  | Type      | Description |
-|---------------------------|-----------|-------------|
-| **model**                   | torch.nn.Module       | Model |
-| **qconfig_type**     | QConfigMapping/QConfig       | QConfig configurations for model quantization |
-| **example_inputs**           | torch.Tensor       | Example input with batch size 1|
-| **is_qat**            | bool       | Toggle for PTQ / QAT |
-| **backend**           | str       | Backend used to run model |
-| **total_epochs**  | int      | Total number of quantized training epochs |
-| **num_batch_norm_update_epochs**   | bool/int       | Whether freezing BatchNorm allowed or not, if yes, then provide number of epochs after freezing happens |
-| **num_observer_update_epochs**        | bool/int       | Whether freezing observers allowed or not, if yes, then provide number of epochs after freezing happens |
-| **prepare_qdq**   | bool       | Extract the pytorch qdq model |
-| **bias_calibration_factor**                    | float     | Use bias calibration |
-| **verbose**              | bool     | Enable or disable verbose statements |
-| **float_ops**          | bool     | Enable float bias for Conv and Linear layers, increases accuracy and inference time |
-
-
-## Tips & Notes
-
-- **num_batch_norm_update_epochs**
-    - None: Freezes the BatchNorm in middle of epoch
-    - False: Doesn't freeze the BatchNorm which will overfit the model
-    - int (epoch): Best to keep the value from half or 3/4th epoch
-- **float_ops**
-    - If enabled the addition will have float bias which increases the accuracy
-    - This disables the BNORM to happen on TINPU HW
 
 ---

@@ -486,13 +486,15 @@ class TINPUQuantizedReplacementUtils():
         zero_point = getattr(self.module, start.args[2].target)
         # OSS Module
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, num_bits_scale=self.num_bits_scale)
-        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -(2**(self.activation_bw - 1)), 2**(self.activation_bw - 1) - 1, ndim=4, dim=1)
+        oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -(2**(self.activation_bw - 1)), 2**(self.activation_bw - 1) - 1, ndim=2, dim=1)
         # Get the module present after quantization
         if end.target in named_modules:
             # If flatten module is present in named_modules, we use the module
             replace_module = named_modules[end.target]
         # Sequential Module comprising of OSS and Replacement Module
-        seq_module = torch.nn.Sequential(oss_module, replace_module)
+        seq_module = replace_module
+        if self.float_ops.__len__():
+            seq_module = torch.nn.Sequential(oss_module, replace_module)
         replace_call_function_or_method(self.module, start, end, seq_module, self._get_module_num())      
         return None
     
