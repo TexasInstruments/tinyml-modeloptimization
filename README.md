@@ -11,7 +11,7 @@ Model optimization toolkit that is necessary for quantization for 2bit/4bit/8bit
 If you want to use the repository as it is, i.e a Python package, then you can simply install this as a pip installable package:
 
 ```commandline
-pip install git+https://github.com/TexasInstruments/tinyml-tensorlab.git@main#subdirectory=tinyml-modeloptimization/torchmodelopt
+pip install git+https://github.com/TexasInstruments/tinyml-tensorlab.git@r1.1#subdirectory=tinyml-modeloptimization/torchmodelopt
 ```
 
 To setup the repository for development, this python package and the dependencies can be installed by using the setup file.
@@ -25,9 +25,11 @@ cd tinyml-modeloptimization/torchmodelopt
 
 The repository provides the following features:
 1. **Examples**: The repository comes with examples to get started with modeloptimization
-2. **Different Bit-Widths**: Lower precision for representing weights, biases and numbers can be selected to save memory and speed up the inference
-3. **PTQ/QAT**: Different quantization methods like PTQ and QAT are supported
-4. **ONNX Models**: Quantized models are exported as ONNX structure which can be easily compiled and run on device
+2. **Quantization** :
+   * **Different Bit-Widths**: Lower precision for representing weights, biases and numbers can be selected to save memory and speed up the inference
+   * **PTQ/QAT**: Different quantization methods like PTQ and QAT are supported
+   * **ONNX Models**: Quantized models are exported as ONNX structure which can be easily compiled and run on device
+*  **Neural network Architecture Search (NAS)**: [Read more here](./tinyml_torchmodelopt/nas/readme.md)
 
 Examples for using this repository is present at [Examples](./torchmodelopt/examples/) and for compilation of ONNX Models using TVM Compiler at [Compilation](https://software-dl.ti.com/mctools/nnc/mcu/users_guide/index.html)
 
