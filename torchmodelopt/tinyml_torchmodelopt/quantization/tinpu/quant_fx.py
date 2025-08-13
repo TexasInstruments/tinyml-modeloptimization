@@ -101,7 +101,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.activation_bw = qconfig_type['activation']['bitwidth']
         self.power2_scale = qconfig_type['weight']['power2_scale']
         self.output_dequantize = output_dequantize
-        self.float_ops = kwargs.get('float_ops', False)
+        self.float_ops = kwargs.get('float_ops', [])
 
         if self.weight_bw >= 8:
             assert self.power2_scale is True, 'for 8bit quantization, power2_scale must be set to True'
