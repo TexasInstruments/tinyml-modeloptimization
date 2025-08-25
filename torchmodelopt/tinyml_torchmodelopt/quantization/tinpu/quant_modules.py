@@ -8,14 +8,22 @@ class ReduceSum(torch.nn.Module):
 class RoundModule(torch.nn.Module):
     def forward(self, x):
         return torch.round(x)
-            
+
+class FloorClip(torch.nn.Module):
+    def __init__(self, min_val=-255, max_val=255):
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+    def forward(self, x):
+        return torch.clamp(torch.floor(x), self.min_val, self.max_val)
+
 class AddModule(torch.nn.Module):
     def __init__(self, value):
         super().__init__()
         self.value = value
     def forward(self, x):
         return x + self.value
-                
+
 class MultiplyModule(torch.nn.Module):
     def __init__(self, value):
         super().__init__()

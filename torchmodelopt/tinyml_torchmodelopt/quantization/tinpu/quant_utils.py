@@ -1,3 +1,4 @@
+from numpy import ceil, log2
 import torch
 from torch.fx import GraphModule, Node
 
@@ -284,6 +285,19 @@ class TINPUQuantizedReplacementUtils():
         else:
             qbn_module = normalize_input
         # Remove the scale, zero_point, quantize method and bn layer with OSS Module
+        # a = log2(q_scale)
+        # a = ceil(a)
+        # scale_ = 2**a / q_scale
+        # qbn_module = torch.nn.Sequential(
+        #     MultiplyModule(torch.tensor([int(scale_*512)]).reshape(1,1,1,1)),         # Mul
+        #     AddModule(torch.tensor([(2**(a-1))*512]).reshape(1,1,1,1)),      # Add
+        #     MultiplyModule(1/torch.tensor([(2**a)*512]).reshape(1,1,1,1)),               # Mul
+        #     FloorClip(),                                               # Floor, Clip
+        #     MultiplyModule((64*(q_scale*qbn_module.weight/bn_sigma/scale).reshape(1,3,1,1).detach().cpu()).type(torch.int)),   # Mul
+        #     AddModule(((64*(scale/2 + qbn_module.bias - (qbn_module.running_mean/bn_sigma*qbn_module.weight))/scale).reshape(1,3,1,1).detach().cpu()).type(torch.int)),
+        #     MultiplyModule(torch.tensor([1/64, 1/64, 1/64]).reshape(1,3,1,1)),                # Mul
+        #     FloorClip(),                                              # Floor, Clip
+        # )
         replace_call_function_or_method(self.module, start, end, qbn_module, self._get_module_num())
         return None
     
