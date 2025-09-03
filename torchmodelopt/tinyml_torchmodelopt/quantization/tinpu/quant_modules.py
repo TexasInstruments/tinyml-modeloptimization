@@ -10,12 +10,15 @@ class RoundModule(torch.nn.Module):
         return torch.round(x)
 
 class FloorClip(torch.nn.Module):
-    def __init__(self, min_val=-255, max_val=255):
+    def __init__(self, min_val=None, max_val=None):
         super().__init__()
         self.min_val = min_val
         self.max_val = max_val
     def forward(self, x):
-        return torch.clamp(torch.floor(x), self.min_val, self.max_val)
+        x = torch.floor(x)
+        if self.min_val:
+            x = torch.clamp(x, self.min_val, self.max_val)
+        return x
 
 class AddModule(torch.nn.Module):
     def __init__(self, value):
