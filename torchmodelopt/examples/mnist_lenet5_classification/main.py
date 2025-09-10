@@ -10,9 +10,6 @@ import os
 import shutil
 import re
 import random
-import torchaudio
-from scipy.io import wavfile
-from pydub import AudioSegment
 from typing import Tuple, List
 
 from tinyml_torchmodelopt.quantization import \
@@ -27,11 +24,7 @@ import torch.nn.functional as F
 
 
 from torchmetrics.classification import Accuracy
-from tqdm import tqdm
-import tensorflow as tf
 import torch.optim as optim
-import hashlib
-import requests
 import tarfile
 import argparse
 import os
@@ -43,7 +36,7 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import ConcatDataset, Dataset
-from PIL import Image
+
 
 # FX quantization imports
 import torch.ao.quantization as tq
@@ -53,10 +46,7 @@ loss_fn = CrossEntropyLoss()
 import os
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset
-from tqdm import tqdm
 
-
-import tensorflow as tf
 
 
 import onnx
@@ -561,17 +551,18 @@ if __name__ == '__main__':
     #Define the dataloaders
   
     example_input, _ = next(iter(test_loader))
-    xample_input = torch.unsqueeze(example_input[0],0).to(DEVICE)  # Add channel dimension
+    example_input = torch.unsqueeze(example_input[0],0).to(DEVICE)  # Add channel dimension
+    print("hello", example_input.shape)
     nn_model = None
     
     #Import model structure
     if LOAD_MODEL_FROM_FILE:
-        nn_model = torch.load(os.path.join('trained_models', 'kws_dscnn_pb2pth_model.pth'))
+        nn_model = torch.load(os.path.join('trained_models', 'mnist_pb2pth_model.pth'))
     else:
         nn_model = LeNet5().to(DEVICE)
 
     if LOAD_CHECKPOINT_FROM_FILE:
-        checkpoint = torch.load(os.path.join('trained_models', 'kws_dscnn_pb2pth_checkpoint.pth'))
+        checkpoint = torch.load(os.path.join('trained_models', 'mnist_pb2pth_checkpoint.pth'))
         nn_model.load_state_dict(checkpoint)
 
     # nn_model = nn_model.to(DEVICE)
