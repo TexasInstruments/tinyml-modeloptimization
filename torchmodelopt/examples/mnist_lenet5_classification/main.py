@@ -366,6 +366,7 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
             quant_model = quantize_fx.convert_fx(quant_model.module)
    
     #  Export to ONNX
+    example_input=torch.randn(1,1,28,28)
     if hasattr(quant_model, "export"):
         print(" Exporting to ONNX...")
         quant_model.export(example_input, model_name, input_names=['input'])
@@ -509,7 +510,7 @@ if __name__ == '__main__':
     NUM_EPOCHS = 14
     LEARNING_RATE = 1
     QUANTIZATION_METHOD = 'QAT' #'PTQ' #'QAT' #None
-    WEIGHT_BITWIDTH = 8 #2 #4 #8
+    WEIGHT_BITWIDTH = 4 #2 #4 #8
     ACTIVATION_BITWIDTH = 8 #8 #4 #2
     QUANTIZATION_DEVICE_TYPE = 'TINPU' #'TINPU', 'GENERIC'
     NORMALIZE_INPUT = False #True, #False
@@ -572,13 +573,14 @@ if __name__ == '__main__':
         nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
 
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES , CATEGORIES_NAME)
-    # export_model(nn_model, example_input, MODEL_NAME, with_quant=False)
+    export_model(nn_model, example_input, MODEL_NAME, with_quant=False)
     print("OG model accuracy is", accuracy)
 
     if QUANTIZATION_METHOD in ('QAT', 'PTQ'):
 
         MODEL_NAME = 'quant_' + MODEL_NAME
-        quant_epochs = int(NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
+        quant_epochs=1
+        # quant_epochs = int(NUM_EPOCHS*2) if ((WEIGHT_BITWIDTH<8) or (ACTIVATION_BITWIDTH<8)) else max(NUM_EPOCHS//2, 5)
         quant_model = get_quant_model(nn_model, example_input=example_input, total_epochs=quant_epochs, 
                                       weight_bitwidth=WEIGHT_BITWIDTH, activation_bitwidth=ACTIVATION_BITWIDTH, 
                                       quantization_method=QUANTIZATION_METHOD, quantization_device_type=QUANTIZATION_DEVICE_TYPE,
@@ -601,8 +603,9 @@ if __name__ == '__main__':
         
     else:
         print("No Quantization method is specified. Will not do quantization.")
-    
+     
+    test_loader_onnx  = torch.utils.data.DataLoader(test_ds,  batch_size=1, num_workers=1,drop_last=True)
     accuracy = validate_saved_model(
-        "quant_mnist.onnx", test_loader)
+        "quant_mnist.onnx", test_loader_onnx)
     print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
 
