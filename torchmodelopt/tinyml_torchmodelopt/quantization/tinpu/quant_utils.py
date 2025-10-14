@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 from .quant_modules import *
 
 class TINPUQuantizedReplacementUtils():
-    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool, float_ops: bool):
+    def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool, float_ops: List):
 
         self.module: GraphModule = model
         self.graph_quant_params: Dict[str, Dict] = dict()
@@ -194,7 +194,7 @@ class TINPUQuantizedReplacementUtils():
         module = self.module
         return module
     
-    def search_pattern(self, replacement_pattern: List) -> List[Node]:
+    def search_pattern(self, replacement_pattern: List) -> List[List[torch.Node]]:
         matches = simple_chain_searcher(self.module, replacement_pattern)
         return matches
     
@@ -253,6 +253,7 @@ class TINPUQuantizedReplacementUtils():
         q_scale = getattr(self.module, start.args[1].target)
         q_zp = getattr(self.module, start.args[2].target)
         qdq_module = QDQModule(1/q_scale, q_scale)
+        channels = qbn_module.running_mean.shape[0]
 
         scale = qbn_module.scale
         zero_point = qbn_module.zero_point
@@ -291,8 +292,8 @@ class TINPUQuantizedReplacementUtils():
                 AddModule(torch.tensor([float_scaler / 2 ]).reshape(1,1,1,1)),               # Add
                 MultiplyModule(1/torch.tensor([float_scaler]).reshape(1,1,1,1)),            # Mul
                 FloorClip(-2**self.activation_bw, 2**self.activation_bw - 1),                                                              # Floor, Clip
-                MultiplyModule((float_scaler*(q_scale*qbn_module.weight/bn_sigma/scale).reshape(1,3,1,1).detach().cpu()).type(torch.int)),   # Mul
-                AddModule(((float_scaler*(scale/2 + qbn_module.bias - (qbn_module.running_mean/bn_sigma*qbn_module.weight))/scale).reshape(1,3,1,1).detach().cpu()).type(torch.int)),
+                MultiplyModule((float_scaler*(q_scale*qbn_module.weight/bn_sigma/scale).reshape(1,channels,1,1).detach().cpu()).type(torch.int)),   # Mul
+                AddModule(((float_scaler*(scale/2 + qbn_module.bias - (qbn_module.running_mean/bn_sigma*qbn_module.weight))/scale).reshape(1,channels,1,1).detach().cpu()).type(torch.int)),
                 MultiplyModule(torch.tensor([1/float_scaler]).reshape(1,1,1,1)),        # Mul
                 FloorClip(-2**self.activation_bw, 2**self.activation_bw - 1),                                                             # Floor, Clip
             )
