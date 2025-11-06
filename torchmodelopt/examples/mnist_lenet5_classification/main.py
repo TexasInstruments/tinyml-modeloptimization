@@ -172,11 +172,9 @@ def calibrate(dataloader: DataLoader, model: nn.Module, loss_fn):
     total_batches = len(dataloader)
     
     for batch_idx, (data,target) in enumerate(dataloader):
+        
             inputs, targets = data.to(DEVICE), target.to(DEVICE)
-            # inputs = batch["audio"].to(DEVICE)
-            # labels = batch["label"].clone().to(torch.long).to(DEVICE)
-          #  labels = torch.tensor(batch["label"], dtype=torch.long).to(DEVICE)  # Convert to tensor and move to device
-            
+    
             # Forward pass
             outputs = model(inputs)
             outputs = outputs.flatten(start_dim=1)
@@ -520,7 +518,7 @@ if __name__ == '__main__':
   
     example_input, _ = next(iter(test_loader))
     example_input = torch.unsqueeze(example_input[0],0).to(DEVICE)  # Add channel dimension
-    # print("hello", example_input.shape)
+
     nn_model = None
     
     #Import model structure
