@@ -136,9 +136,9 @@ def test(model, test_loader, loss_fn):
     total = 0
 
 
-    with torch.inference_mode():
+    with torch.no_grad():
         for batch, (data,target) in test_loader:
-            inputs, targets = data.to(DEVICE), targets.to(DEVICE)
+            inputs, targets = data.to(DEVICE), target.to(DEVICE)
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
 
@@ -160,7 +160,8 @@ def calibrate(dataloader: DataLoader, model: nn.Module, loss_fn):
     avg_loss = 0.0
     total_batches = len(dataloader)
     
-    for batch_idx, (data,target) in enumerate(dataloader):
+    with torch.no_grad():
+     for batch_idx, (data,target) in enumerate(dataloader):
         
             inputs, targets = data.to(DEVICE), target.to(DEVICE)
     
