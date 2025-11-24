@@ -63,10 +63,12 @@ class TransposeModule(torch.nn.Module):
         return x.transpose(*self.dims) # dims is a tuple of two dimensions, so have to unpack this
 
 class AdaptiveAvgPool2d(torch.nn.Module):
-    def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
+    def __init__(self, pool_module, scale, zero_point, activation_bw=8, num_bits_scale=1):
         super().__init__()
         self.reduce_sum = ReduceSum()
         self.round = RoundModule()
+        self.pool_module = pool_module
+        self.output_size = pool_module.output_size
         self.scale = scale
         self.zero_point = zero_point
         self.activation_bw = activation_bw
@@ -81,13 +83,30 @@ class AdaptiveAvgPool2d(torch.nn.Module):
     def forward(self, x):
         shape = x.shape
         area = shape[2] * shape[3]
-
-        offset, mult, shift_mult = compute_offset_scale_shift(self.zero_point, 1 / area, num_bits_scale=self.num_bits_scale)
-        oss = TINPUOffsetScaleShift(offset, mult, shift_mult, self.quant_min, self.quant_max, ndim=2, dim=1)
-        
-        x = self.reduce_sum(x) 
-        x = self.round(x)         
-        x = oss(x)     
+        if(self.output_size[0]*self.output_size[1] == 1):
+            offset, mult, shift_mult = compute_offset_scale_shift(self.zero_point, 1 / area, num_bits_scale=self.num_bits_scale)
+            oss = TINPUOffsetScaleShift(offset, mult, shift_mult, self.quant_min, self.quant_max, ndim=2, dim=1)
+            
+            x = self.reduce_sum(x) 
+            x = self.round(x)         
+            x = oss(x) 
+        elif ((shape[2] % self.output_size[0] == 0) and (shape[3] % self.output_size[1] == 0)):
+            stride_size = (shape[2] // self.output_size[0], shape[3] // self.output_size[1])
+            kernel_size = (shape[2] - (self.output_size[0] - 1) * stride_size[0],
+                           shape[3] - (self.output_size[1] - 1) * stride_size[1])
+            avg_pool_2d = torch.nn.AvgPool2d(kernel_size=kernel_size, stride=stride_size)
+            total_kernel_area = kernel_size[0] * kernel_size[1]
+            oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor((total_kernel_area+1)//2), torch.tensor(1 / total_kernel_area), num_bits_scale=self.num_bits_scale)
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 2**self.activation_bw - 1, ndim=2, dim=1)
+            # Multiply Module
+            mult_module = MultiplyModule(total_kernel_area)
+            # Round Module
+            round_module = RoundModule()
+            # Sequential Module comprising of AvgPool2D, Multiply, Round, OSS
+            output_module = torch.nn.Sequential(avg_pool_2d, mult_module, round_module, oss_module)
+            x = output_module(x)
+        else:
+            x = self.pool_module(x)
         return x
     
 class AddReLUBlock(torch.nn.Module):
