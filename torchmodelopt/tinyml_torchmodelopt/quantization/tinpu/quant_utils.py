@@ -465,6 +465,16 @@ class TINPUQuantizedReplacementUtils():
         replace_call_function_or_method(self.module, start, permute_node, perm_module, self._get_module_num())
         return None
     
+    def from_transpose(self, start: Node, end: Node):
+        # Transpose Node
+        transpose_node = end
+        dims=transpose_node.args[1:]
+        transpose_module = TransposeModule(dims)
+        
+        # Replace transpose operation with TransposeModule
+        replace_call_function_or_method(self.module, start, transpose_node, transpose_module, self._get_module_num())
+        return None
+    
     # Replacement Rules for Flatten
     def from_flatten(self, start: Node, end: Node):
         named_modules = self._get_named_modules()
