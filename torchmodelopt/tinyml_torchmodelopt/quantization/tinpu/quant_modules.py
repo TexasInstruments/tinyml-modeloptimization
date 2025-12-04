@@ -96,7 +96,7 @@ class AdaptiveAvgPool2d(torch.nn.Module):
                            shape[3] - (self.output_size[1] - 1) * stride_size[1])
             avg_pool_2d = torch.nn.AvgPool2d(kernel_size=kernel_size, stride=stride_size)
             total_kernel_area = kernel_size[0] * kernel_size[1]
-            oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor((total_kernel_area+1)//2), torch.tensor(1 / total_kernel_area), num_bits_scale=self.num_bits_scale)
+            oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(torch.tensor(0), torch.tensor(1 / total_kernel_area), num_bits_scale=self.num_bits_scale)
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 2**self.activation_bw - 1, ndim=2, dim=1)
             # Multiply Module
             mult_module = MultiplyModule(total_kernel_area)
