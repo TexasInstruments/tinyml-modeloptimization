@@ -53,6 +53,14 @@ class PermuteModule(torch.nn.Module):
 
     def forward(self, x):
         return x.permute(self.perm)
+        
+class TransposeModule(torch.nn.Module):
+    def __init__(self, dims):
+        super().__init__()
+        self.dims = dims
+    
+    def forward(self, x):
+        return x.transpose(*self.dims) # dims is a tuple of two dimensions, so have to unpack this
 
 class AdaptiveAvgPool2d(torch.nn.Module):
     def __init__(self, scale, zero_point, activation_bw=8, num_bits_scale=1):
