@@ -41,7 +41,7 @@ from ..common import *
 from ..base.fx import TinyMLQuantFxBaseModule
 
 from .quant_utils import TINPUQuantizedReplacementUtils
-from .quant_utils import assign_same_observers_for_residual_inputs
+from .quant_helper_func import assign_same_observers_for_residual_inputs
 from ... import surgery
 
 

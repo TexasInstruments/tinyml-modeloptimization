@@ -2,7 +2,7 @@ import torch
 from torch.fx import GraphModule, Node
 
 from typing import Dict, List, Tuple
-from .quant_helper_func import *
+from .quant_helper_func import remove_hanging_nodes, simple_chain_searcher, add_node_after_node, is_both_node_equal, compute_offset_scale_shift, replace_call_function_or_method
 from .quant_modules import *
 
 class GENERICQuantizedReplacementUtils():

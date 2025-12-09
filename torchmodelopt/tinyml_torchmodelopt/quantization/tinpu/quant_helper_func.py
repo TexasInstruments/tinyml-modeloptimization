@@ -5,56 +5,67 @@ import operator
 from typing import Dict, List
 
 def are_both_function_equal(first_function, second_function) -> bool:
-    ''' Returns the truth of value of operators of both the functions '''
-    import operator
-    operationDict = {torch.add: operator.add,torch.sub: operator.sub,torch.mul: operator.mul,
-                        operator.add: torch.add,operator.sub: torch.sub,operator.mul: torch.mul}
+    """Check if two functions are equivalent operators.
+    
+    Returns:
+        bool: True if functions are equivalent.
+    """
+    operation_dict = {torch.add: operator.add, torch.sub: operator.sub, torch.mul: operator.mul,
+                      operator.add: torch.add, operator.sub: torch.sub, operator.mul: torch.mul}
     if first_function == second_function:
         return True
-    elif hasattr(first_function, 'target') and first_function.target in operationDict.keys():
-        # if it is one  of add, sub, mul from either of operator module or torch module it should be the counter part
-        return second_function == operationDict[first_function]
-    elif first_function in operationDict.keys():
-        # if it is one  of add, sub, mul from either of operator module or torch module it should be the counter part
-        return second_function == operationDict[first_function]
+    elif hasattr(first_function, 'target') and first_function.target in operation_dict:
+        return second_function == operation_dict[first_function]
+    elif first_function in operation_dict:
+        return second_function == operation_dict[first_function]
     else:
         return False
 
 def is_both_node_equal(named_modules: Dict, main_module_node: torch.Node, pattern_type_node: torch.Node) -> bool:
-    '''Returns the truth value of both the given nodes'''
-    both_node_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(named_modules[main_module_node.target], pattern_type_node)
-    both_node_equal = both_node_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
-    both_node_equal = both_node_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
-    return both_node_equal
+    """Check if two nodes are equivalent.
+    
+    Args:
+        named_modules: Dictionary of module names to modules
+        main_module_node: Node from main module
+        pattern_type_node: Pattern node to compare
+        
+    Returns:
+        bool: True if nodes are equivalent
+    """
+    is_equal = main_module_node.op == 'call_module' and isinstance(pattern_type_node, type) and isinstance(named_modules[main_module_node.target], pattern_type_node)
+    is_equal = is_equal or (main_module_node.op == 'call_method' and isinstance(pattern_type_node, str) and main_module_node.target == pattern_type_node)
+    is_equal = is_equal or (main_module_node.op == 'call_function' and are_both_function_equal(main_module_node.target, pattern_type_node))
+    return is_equal
 
 def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[List[torch.Node]]:
-    '''
-    Finds the pattern_type in main_module graph and returns the list of nodes corresponding to pattern
-    The function searches the list of main_module graph nodes in `linear` fashion. It matches the type of nodes 
-    present in pattern_type or the target of main_module node.
+    """Find patterns in the module graph and return matching node sequences.
+    
+    Searches through main_module graph nodes linearly, matching types or targets
+    present in pattern_type.
 
     Args:
-        `main_module`: The GraphModule in which the pattern is searched
-        `pattern_type`: The List of types or target to match
+        main_module: GraphModule in which the pattern is searched
+        pattern_type: List of types or targets to match
 
-    Returns the list of matched nodes
-    '''
-    main_module_nodes = list(main_module.graph.nodes)
-    main_module_length = len(main_module_nodes)
+    Returns:
+        List of matched node sequences
+    """
+    module_nodes = list(main_module.graph.nodes)
+    module_length = len(module_nodes)
     named_modules = dict(main_module.named_modules())
 
-    main_module_idx = 0
+    node_idx = 0
     matched_patterns = []
 
-    while (main_module_idx < main_module_length):
+    while node_idx < module_length:
 
-        main_module_node = main_module_nodes[main_module_idx]
-        nodes_matched = []
+        current_node = module_nodes[node_idx]
+        matched_nodes = []
 
-        curr_node = main_module_node
+        curr_node = current_node
 
         if is_both_node_equal(named_modules, curr_node, pattern_type[0]):
-            nodes_matched.append(curr_node)
+            matched_nodes.append(curr_node)
             found_all = True
             
             for pattern_node in pattern_type[1:]:
@@ -66,12 +77,12 @@ def simple_chain_searcher(main_module: GraphModule, pattern_type: List) -> List[
                         continue
                 found_all = found_all and found
             if found_all:
-                nodes_matched.append(curr_node)
+                matched_nodes.append(curr_node)
 
-        main_module_idx += 1
+        node_idx += 1
 
-        if len(nodes_matched) == 2:
-            matched_patterns.append(nodes_matched)
+        if len(matched_nodes) == 2:
+            matched_patterns.append(matched_nodes)
 
     return matched_patterns
 
@@ -153,56 +164,94 @@ def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, round
     return offset, scaled_signed_weights, shift_mult
 
 def _get_parent_name(target: str):
-    ''' Gets the name of the parent module and attribute name of the module from the target of the module '''
+    """Extract parent module name and attribute name from a target string.
+    
+    Args:
+        target: Target string in format 'parent.module.name'
+        
+    Returns:
+        Tuple of (parent_name, attribute_name)
+    """
     *parent, name = target.rsplit('.', 1)
     return (parent[0] if parent else ''), name
 
 def find_hanging_nodes(main_module: GraphModule) -> List[Node]:
-    ''' Returns a list of nodes which have no users and aren't placeholder or the output nodes '''
-    count = []
+    """Find nodes with no users that aren't placeholders or outputs.
+    
+    Args:
+        main_module: GraphModule to search
+        
+    Returns:
+        List of hanging nodes
+    """
+    hanging_nodes = []
     for node in main_module.graph.nodes:
-        if (node.op not in ('output', 'placeholder') and len(node.users) == 0):
-            count.append(node)
-    return count
+        if node.op not in ('output', 'placeholder') and len(node.users) == 0:
+            hanging_nodes.append(node)
+    return hanging_nodes
 
 def lint_and_recompile(main_module: GraphModule) -> None:
-    ''' Lint and recompile the main_module '''
+    """Lint and recompile the graph module.
+    
+    Args:
+        main_module: GraphModule to lint and recompile
+    """
     main_module.graph.lint()
     main_module.recompile()
-    return None
 
 def get_name_from_module(node_module: torch.nn.Module, module_no: int) -> str:
-    new_node_name = ''
+    """Generate a unique name from a module.
+    
+    Args:
+        node_module: Module to generate name from
+        module_no: Module number for uniqueness
+        
+    Returns:
+        Generated module name (snake_case)
+    """
+    module_name = ''
     if hasattr(node_module, '__iter__'):
         for module in node_module:
-            new_node_name += str(module.__class__.__name__) + '_'
+            module_name += str(module.__class__.__name__) + '_'
     else:
-        new_node_name += str(node_module.__class__.__name__) + '_'
-    new_node_name += str(module_no)
-    new_node_name = new_node_name.lower().replace('tinpuoffsetscaleshift', 'oss')
-    return new_node_name
+        module_name += str(node_module.__class__.__name__) + '_'
+    module_name += str(module_no)
+    module_name = module_name.lower().replace('tinpuoffsetscaleshift', 'oss')
+    return module_name
 
 def remove_hanging_nodes(main_module: GraphModule) -> None:
-    ''' Remove the hanging nodes from the main_module recursively '''
+    """Remove hanging nodes from the module recursively.
+    
+    Args:
+        main_module: GraphModule to clean
+    """
     while True:
         hanging_nodes = find_hanging_nodes(main_module)
-        if len(hanging_nodes) == 0:
+        if not hanging_nodes:
             break
         for node in hanging_nodes:
             main_module.graph.erase_node(node)
 
     lint_and_recompile(main_module)
-    return None
 
 def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, start: Node, end: Node) -> None:
-    ''' Removes all the call_modules and nodes present between start and end and replaces the uses with the new_node '''
-    main_modules = dict(main_module.named_modules())
+    """Remove call_module nodes between start and end nodes.
+    
+    Removes all intermediate nodes and replaces uses with new_node.
+    
+    Args:
+        main_module: GraphModule to modify
+        new_node: Node to replace with
+        start: Starting node
+        end: Ending node
+    """
+    named_modules = dict(main_module.named_modules())
     ptr = start
     while ptr != end:
         if ptr.op == 'call_module':
-            parent_name, name = _get_parent_name(ptr.target)
-            parent_module = main_modules[parent_name]
-            parent_module.__delattr__(name)
+            parent_name, attr_name = _get_parent_name(ptr.target)
+            parent_module = named_modules[parent_name]
+            parent_module.__delattr__(attr_name)
             
         users = list(ptr.users)
 
@@ -212,97 +261,104 @@ def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, s
             ptr = temp
 
     if ptr.op == 'call_module':
-        parent_name, name = _get_parent_name(end.target)
-        parent_module = main_modules[parent_name]
-        parent_module.__delattr__(name)
+        parent_name, attr_name = _get_parent_name(end.target)
+        parent_module = named_modules[parent_name]
+        parent_module.__delattr__(attr_name)
 
     ptr.replace_all_uses_with(new_node)
     main_module.graph.erase_node(end)
-    return None
 
-def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int=0) -> None:
-    ''' The nodes from start to end is replaced with the replace module. All the intermediate 
-    nodes are removed between start to end.
+def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int = 0) -> None:
+    """Replace nodes between start and end with a replacement module.
+    
+    Removes intermediate nodes and inserts the replacement module.
 
     Args:
-        `main_module`: The graph module in which the replacement is to be done.
-        `start`: The node where the replace module will be inserted.
-        `end`: The node till where the nodes are to be removed.
-        `replace_module`: The module which will be replaced with the start module.
-        `module_no`: A number denoting the number of modules replaced till now. (Unique name for node)
-    '''
+        main_module: Graph module to modify
+        start: Node where replacement will be inserted
+        end: Final node in replacement range
+        replace_module: Module to insert
+        module_no: Module number for unique naming
+    """
     if start == end:
         traced_replacement = symbolic_trace(replace_module)
         replacement_nodes = [node for node in traced_replacement.graph.nodes if node.op not in ['placeholder', 'output']]
 
         if len(replacement_nodes) == 1:
-            # call_function or call_method operation
+            # Get operation type and target from replacement node
             replacement_operation = replacement_nodes[0].op
-            # function call or method name
             function_or_method = replacement_nodes[0].target
-            # Replacing in main_module graph specifying insert point after start within this scope
             new_node = None
             with main_module.graph.inserting_after(start):
-                # Insert a new node (replacement_node) using 'call_method' or 'call_function'
+                # Insert new node using the operation type (call_method or call_function)
                 new_node = getattr(main_module.graph, replacement_operation)(function_or_method, start.args, start.kwargs)
-                # Replaces nodes that used the value of 'start' to now use that value new_node
+                # Replace all uses of start node with new node
                 start.replace_all_uses_with(new_node)
-            # Remove the unused 'start' node from graph as 'new_node' has replaced it
+            # Remove the original start node
             main_module.graph.erase_node(start)
             lint_and_recompile(main_module)
             return
 
     # Get the name of replaced module
     new_node_name = get_name_from_module(replace_module, module_no)
-    # Add the child module in main_module
+    # Add the module to main_module
     main_module.add_module(new_node_name, replace_module)
 
-    # Inserting in main_module graph specifying insert point before start within this scope
+    # Insert replacement in graph before start node
     with main_module.graph.inserting_before(start):
-        # Collect all the args which aren't attribute and needs to passed to call module
+        # Collect non-attribute arguments to pass to call module
         args = []
         for arg in start.args:
-            if type(arg) == Node and arg.op != "get_attr":
+            if isinstance(arg, Node) and arg.op != "get_attr":
                 args.append(arg)
         new_node = main_module.graph.call_module(new_node_name, tuple(args), {})
-        # Remove all the intermediate call module nodes
+        # Remove intermediate nodes
         remove_intermediate_call_modules(main_module, new_node, start, end)
     lint_and_recompile(main_module)
-    return None
 
-def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int=0, rename_node_flag: bool=False) -> None:
-    ''' The call module associated with the start node is replaced with the replace module. All the intermediate
-    nodes are removed between start to end.
+def replace_call_module(main_module: GraphModule, start: Node, end: Node, replace_module: torch.nn.Module, module_no: int = 0, rename_node_flag: bool = False) -> None:
+    """Replace the call_module at start node with replace_module.
+    
+    Removes all intermediate nodes between start and end.
 
     Args:
-        `main_module`: The graph module in which the replacement is to be done.
-        `start`: The node having the call_module.
-        `end`: The node till where the nodes are to be removed.
-        `replace_module`: The module which will be replaced with the start module.
-    '''
-    main_modules = dict(main_module.named_modules())
-    # Get the parent module name and attribute name
+        main_module: Graph module to modify
+        start: Node with call_module to replace
+        end: Final node in replacement range
+        replace_module: Module to replace with
+        module_no: Module number for unique naming
+        rename_node_flag: Whether to rename the node
+    """
+    named_modules = dict(main_module.named_modules())
+    # Get parent module and attribute name
     parent_name, attr_name = _get_parent_name(start.target)
-    parent_module = main_modules[parent_name]
-    # Set the attribute of parent module with the replacement module
+    parent_module = named_modules[parent_name]
+    # Replace the module attribute with replacement
     parent_module.__setattr__(attr_name, replace_module)
     
     if rename_node_flag:
         new_node_name = get_name_from_module(replace_module, module_no)
         start.name = new_node_name
 
-    # If there are more nodes between start and end, remove them all
+    # Remove intermediate nodes between start and end
     if start != end:
-        # Initialize pointers for iteration
         new_node = start
-        # Remove all the intermediate call module nodes
+        # Remove all intermediate call module nodes
         users = list(start.users)
         for user in users:
             remove_intermediate_call_modules(main_module, new_node, user, end)
     remove_hanging_nodes(main_module)
-    return None
 
 def get_node_from_module(module: GraphModule, node: Node):
+    """Get the module associated with a node.
+    
+    Args:
+        module: GraphModule to search
+        node: Node to get module from
+        
+    Returns:
+        Module associated with node or None
+    """
     named_modules = dict(module.named_modules())
     preserve_module = None
     if hasattr(node, 'target') and node.target in named_modules:
@@ -310,6 +366,12 @@ def get_node_from_module(module: GraphModule, node: Node):
     return preserve_module
 
 def remove_node_from_module(module: GraphModule, node: Node):
+    """Remove a node from the module graph.
+    
+    Args:
+        module: GraphModule to modify
+        node: Node to remove
+    """
     node_before = node.args[0]
     node.replace_all_uses_with(node_before)
     module.graph.erase_node(node)
@@ -318,59 +380,97 @@ def remove_node_from_module(module: GraphModule, node: Node):
         module.delete_submodule(node.target)
     if node.name in module.graph._graph_namespace._used_names:
         module.graph._graph_namespace._used_names.remove(node.name)
-    # Lint and recompile the graph and module
+    # Lint and recompile the graph
     lint_and_recompile(module)
-    return None
 
 def add_module_after_node(module: GraphModule, start: Node, end: Node, preserve_module: torch.nn.Module):
+    """Add a module after a specified node in the graph.
+    
+    Args:
+        module: GraphModule to modify
+        start: Starting node
+        end: Node after which to insert
+        preserve_module: Module to add
+    """
     with module.graph.inserting_after(end):
-        # Add the submodule in module
+        # Add the submodule to the module
         if hasattr(start, 'target'):
             module.add_submodule(start.target, preserve_module)
-        # Add the module in graph
+        # Add the call_module node to the graph
         new_node = module.graph.call_module(start.target)
         end.replace_all_uses_with(new_node)
-        new_node.insert_arg(0, end) 
-    return None
+        new_node.insert_arg(0, end)
 
 def add_node_after_node(module: GraphModule, start: Node, end: Node):
-    # Get the module involved
+    """Add a node after a specified node by preserving and reinserting the module.
+    
+    Args:
+        module: GraphModule to modify
+        start: Node to preserve
+        end: Node after which to insert
+    """
+    # Get the module from the start node
     preserve_module = get_node_from_module(module, start)
-    # Remove the node and replace it's use with previous node
+    # Remove the node from graph
     remove_node_from_module(module, start)
     # Add the preserved module after the end node
     add_module_after_node(module, start, end, preserve_module)
-    # Lint and recompile the graph and module
+    # Lint and recompile
     lint_and_recompile(module)
-    return None
 
 def add_activation_to_node(model: GraphModule, node: Node, range_max: int) -> None:
-    f = getattr(model, str(node))
-    if hasattr(f, "activation_post_process"):
-        # Enforce the same quantization scale for all residual inputs
-        f.activation_post_process.range_max = range_max
-        f.activation_post_process.fixed_range = True
-        setattr(model, str(node), f)
-    return None
+    """Add activation quantization parameters to a node.
+    
+    Args:
+        model: GraphModule containing the node
+        node: Node to add activation to
+        range_max: Maximum quantization range
+    """
+    module_attr = getattr(model, str(node))
+    if hasattr(module_attr, "activation_post_process"):
+        # Set quantization scale for residual inputs
+        module_attr.activation_post_process.range_max = range_max
+        module_attr.activation_post_process.fixed_range = True
+        setattr(model, str(node), module_attr)
 
 def set_quant_range(model: GraphModule, node: Node, target_name: str, quant_min: int, quant_max: int) -> None:
-    modules_in_main_graph = dict(model.named_modules())
-    f = getattr(model, str(node))
-    # Check if the residual input is a ConvBn2d module
-    condition_to_check = node.args[0].target in modules_in_main_graph
-    condition_to_check = condition_to_check and target_name == operator.add 
-    condition_to_check = condition_to_check and isinstance(modules_in_main_graph[node.args[0].target], torch.ao.nn.intrinsic.qat.modules.conv_fused.ConvBn2d)
-    if condition_to_check:
-        # Set the quant_min and quant_max to a 10-bit signed range to prevent precision
-        # loss with addition of 8-bit (signed or unsigned) residual data.
-        if hasattr(f, "quant_min") and hasattr(f, "quant_max"):
-            f.quant_min = quant_min
-            f.quant_max = quant_max
-            f.dtype = torch.qint32
-            setattr(model, str(node), f)
-    return None
+    """Set quantization range for a node.
+    
+    Args:
+        model: GraphModule containing the node
+        node: Node to set range for
+        target_name: Target operation name
+        quant_min: Minimum quantization value
+        quant_max: Maximum quantization value
+        
+    Raises:
+        IndexError: If node.args is empty
+        RuntimeError: If setting range fails
+    """
+    if not node.args:
+        raise IndexError("Node has no arguments to access")
+    
+    try:
+        named_modules = dict(model.named_modules())
+        module_attr = getattr(model, str(node), None)
+        if module_attr is None:
+            raise AttributeError(f"Model has no attribute for node '{str(node)}'")
+        
+        # Check if input is a ConvBn2d module for proper precision handling
+        is_convbn_add = node.args[0].target in named_modules
+        is_convbn_add = is_convbn_add and target_name == operator.add
+        is_convbn_add = is_convbn_add and isinstance(named_modules[node.args[0].target], torch.ao.nn.intrinsic.qat.modules.conv_fused.ConvBn2d)
+        if is_convbn_add:
+            # Set 10-bit signed range to prevent precision loss with 8-bit residual data
+            if hasattr(module_attr, "quant_min") and hasattr(module_attr, "quant_max"):
+                module_attr.quant_min = quant_min
+                module_attr.quant_max = quant_max
+                module_attr.dtype = torch.qint32
+                setattr(model, str(node), module_attr)
+    except Exception as e:
+        raise RuntimeError(f"Failed to set quantization range: {str(e)}")
 
-def adjust_residual_inputs_qconfig(model : GraphModule, range_max: int=0, quant_min: int=torch.inf, quant_max: int=torch.inf) -> GraphModule:
+def adjust_residual_inputs_qconfig(model: GraphModule, range_max: int = 0, quant_min: int = torch.inf, quant_max: int = torch.inf) -> GraphModule:
     """
     Modify the QConfig inputs of add and concat operators to enforce the same quantization scale
     factors.
@@ -391,32 +491,43 @@ def adjust_residual_inputs_qconfig(model : GraphModule, range_max: int=0, quant_
     model.recompile()
     return model
 
-def assign_same_observers(model : GraphModule, node_1: Node, node_2: Node) -> GraphModule:
-    """
-    Assigns the same observers to the residual inputs of a given node
+def assign_same_observers(model: GraphModule, node_1: Node, node_2: Node) -> GraphModule:
+    """Assign the same observers to two nodes' activation quantization.
+    
+    Args:
+        model: GraphModule containing the nodes
+        node_1: First node to get observer from
+        node_2: Second node to assign observer to
+        
+    Returns:
+        Modified GraphModule
     """
     activation_post_proc = None
     if hasattr(model, node_1.target):
-        f = getattr(model, node_1.target)
-        if hasattr(f, "activation_post_process"):
-            activation_post_proc = f.activation_post_process
+        module_attr = getattr(model, node_1.target)
+        if hasattr(module_attr, "activation_post_process"):
+            activation_post_proc = module_attr.activation_post_process
 
     if activation_post_proc and hasattr(model, node_2.target):
-        f = getattr(model, node_2.target)
-        setattr(f, "activation_post_process", activation_post_proc)
+        module_attr = getattr(model, node_2.target)
+        setattr(module_attr, "activation_post_process", activation_post_proc)
         model.graph.lint()
         model.recompile()
         
     return model
 
 def assign_same_observers_for_residual_inputs(model: GraphModule):
+    """Assign same observers to all residual input node pairs.
+    
+    Finds nodes with residual operators and assigns matching observers
+    to their input nodes.
+    
+    Args:
+        model: GraphModule to modify
     """
-    Find the observers for the residual inputs of a given node and assign same observers to them
-    """
-    residual_operators = set([operator.add, torch.add, "add", torch.cat, torch.stack])
+    residual_operators = {operator.add, torch.add, "add", torch.cat, torch.stack}
     for node in model.graph.nodes:
         target_name = node.target
         if target_name in residual_operators:
             node_1, node_2 = node.args
-            assign_same_observers(model, node_1, node_2)    
-    return    
+            assign_same_observers(model, node_1, node_2)
