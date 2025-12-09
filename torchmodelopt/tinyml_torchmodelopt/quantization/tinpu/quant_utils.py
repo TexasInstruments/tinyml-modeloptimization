@@ -578,14 +578,8 @@ class TINPUQuantizedReplacementUtils():
         '''
         # AdaptiveAvgPool2D Module
         pool_module = self._get_named_modules()[start.target]
-        # Calculate the total_kernel_area from pool module output size
-        total_kernel_area = pool_module.output_size[0] * pool_module.output_size[1]
-        if total_kernel_area != 1:
-            #  If output size isn't (1, 1), we will use the generic implementation
-            replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
-            return None
         scale, zero_point = self.get_q_params(start, using='prev')
-        pool_module = AdaptiveAvgPool2d(scale, zero_point, activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
+        pool_module = AdaptiveAvgPool2d(pool_module, scale, zero_point, activation_bw=self.activation_bw, num_bits_scale=self.num_bits_scale)
         # Replace AdaptiveAvgPool2D with Reduce, Round, OSS
         replace_call_module(self.module, start, end, pool_module, self._get_module_num(), self.rename_nodes_flag)
         return None
