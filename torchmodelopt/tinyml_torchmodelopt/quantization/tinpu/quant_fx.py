@@ -46,7 +46,7 @@ from ... import surgery
 
 
 class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
-    def __init__(self, *args, qconfig_type: Optional[dict] = None, output_dequantize: bool=False, **kwargs) -> None:
+    def __init__(self, *args, qconfig_type: Optional[dict] = None, output_int: bool=True, **kwargs) -> None:
         '''
         The QAT wrapper module does the preparation like in:
         qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
@@ -77,8 +77,8 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
                 }
             }
 
-            output_dequantize: The ONNX model output by default is Quantized. \
-                If False, the output of model will be quantized, if True, the output of model will be quantized
+            output_int: The ONNX model output format. \
+                If True, the output of model will be quantized int8, if False, the output will be dequantized float
         '''
         if qconfig_type == None:
             qconfig_type = {
@@ -100,7 +100,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.weight_bw = qconfig_type['weight']['bitwidth']
         self.activation_bw = qconfig_type['activation']['bitwidth']
         self.power2_scale = qconfig_type['weight']['power2_scale']
-        self.output_dequantize = output_dequantize
+        self.output_int = output_int
         self.float_ops = kwargs.get('float_ops', [])
 
         if self.weight_bw >= 8:
@@ -128,7 +128,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         '''
         # first convert the model to int
         super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
-        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_dequantize=self.output_dequantize, **lkwargs)
+        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_int=self.output_int, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLModelQConfigFormat.TINPU_INT_MODEL:
             self.module = surgery.replace_unsupported_layers(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
@@ -166,7 +166,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
                 return True
         return False
 
-    def replacement_rules(self, replacement_utils: TINPUQuantizedReplacementUtils, is_batch_normalized: bool, output_dequantize: bool) -> List[Tuple]:
+    def replacement_rules(self, replacement_utils: TINPUQuantizedReplacementUtils, is_batch_normalized: bool, output_int: bool) -> List[Tuple]:
         # List to store the pattern and corresponding replacement function
         replacement_rules = [
             ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_qbn),
@@ -193,23 +193,23 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
             ([torch.quantize_per_tensor], replacement_utils.from_q),
         ]
         # Dequantization Module
-        if output_dequantize:
-            # Replaces dequantization layer with OSS
+        if not output_int:
+            # Replaces dequantization layer with OSS (dequantize to float)
             replacement_rules += [(['dequantize'], replacement_utils.from_dq_with_dq)]
         else:
-            # Replaces dequantization layer with Identity
+            # Replaces dequantization layer with Identity (keep as int8)
             replacement_rules += [(['dequantize'], replacement_utils.from_dq)]
 
         return replacement_rules
 
-    def _convert_replacement(self, module: GraphModule, pattern, *args, output_dequantize: bool = False, **kwargs) -> GraphModule:
+    def _convert_replacement(self, module: GraphModule, pattern, *args, output_int: bool = True, **kwargs) -> GraphModule:
         # Check if the model has batch normalization
         is_batch_normalized = self.is_batch_normalized(module)
         # Convert the module using symbolic trace
         module = torch.fx.symbolic_trace(module) if not isinstance(module, torch.fx.GraphModule) else module
         # Get the replacement rules to change the pattern
         replacement_utils = TINPUQuantizedReplacementUtils(module, self.weight_bw, self.activation_bw, self.power2_scale, self.float_ops)
-        replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_dequantize)
+        replacement_rules = self.replacement_rules(replacement_utils, is_batch_normalized, output_int)
         # Replace the patterns using the replacement function
         for replacement_pattern, replacement_function in replacement_rules:
             matches = replacement_utils.search_pattern(replacement_pattern)

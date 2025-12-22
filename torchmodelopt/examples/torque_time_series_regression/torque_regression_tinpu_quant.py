@@ -304,9 +304,9 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     #
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
-            quant_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs, output_dequantize=True)
+            quant_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs, output_int=False)
         elif quantization_method == 'PTQ':
-            quant_model = TINPUTinyMLPTQFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs, output_dequantize=True)
+            quant_model = TINPUTinyMLPTQFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs, output_int=False)
         else:
             raise RuntimeError(f"Unknown Quantization method: {quantization_method}")
         #
