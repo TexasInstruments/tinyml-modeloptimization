@@ -31,17 +31,17 @@
 
 import warnings
 import torch
-from torch.fx import GraphModule
 
 import platform
-from typing import List, Tuple, Optional
-
 
 from ..common import *
 from ..base.fx import TinyMLQuantFxBaseModule
 
+from torch.fx import GraphModule
+from typing import List, Tuple, Optional
+
+from ...surgery.quant_helper_func import assign_same_observers_for_residual_inputs
 from .quant_utils import TINPUQuantizedReplacementUtils
-from .quant_helper_func import assign_same_observers_for_residual_inputs
 from ... import surgery
 
 

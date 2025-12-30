@@ -77,7 +77,8 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         # qconfig_type = None is equivalent to WC8AT8 (or DEFAULT) which uses per_tensor_affine
         # Note: activation qscheme=torch.per_tensor_affine can be converted onnx model with QOperator using onnxruntime optimization
         # but activation qscheme=torch.per_tensor_symmetric stays as QDQ even when using onnxruntime optimization
-        super().__init__(model, *args, qconfig_type=qconfig_type, backend='fbgemm' if platform.system() in ['Windows'] else 'qnnpack', **kwargs)
+        backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
+        super().__init__(model, *args, qconfig_type=qconfig_type, backend=backend, **kwargs)
     
     def convert(self, *args, model_qconfig_format=TinyMLModelQConfigFormat.INT_MODEL, **kwargs):
         '''
@@ -105,16 +106,21 @@ class GenericTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
     def measure_stats(self, float_output, quant_output):
         diff_output = (float_output - quant_output)
         diff_output_abs = diff_output.abs()
-        diff_output_sqr = diff_output**2
-        float_output_sqr = float_output**2
+        diff_output_sqr = diff_output ** 2
+        float_output_sqr = float_output ** 2
         quant_error_min = diff_output_abs.min().item()
         quant_error_max = diff_output_abs.max().item()
         quant_error_mean = diff_output_abs.mean().item()
         quant_snr_db = (10 * torch.log10(float_output_sqr.mean() / diff_output_sqr.mean())).item()
         quant_psnr_db = (10 * torch.log10(float_output_sqr.max() / diff_output_sqr.mean())).item()
         quant_absmu_by_sigma = (float_output.abs().mean() / diff_output.std()).item()
-        diff_output_stats = dict(snr_db=quant_snr_db, psnr_db=quant_psnr_db, absmu_by_sigma=quant_absmu_by_sigma,
-                                 mean=quant_error_mean, min=quant_error_min, max=quant_error_max)
+        diff_output_stats = dict(
+            snr_db=quant_snr_db, 
+            psnr_db=quant_psnr_db, 
+            absmu_by_sigma=quant_absmu_by_sigma,
+            mean=quant_error_mean, 
+            min=quant_error_min, 
+            max=quant_error_max)
         return diff_output_stats
 
 

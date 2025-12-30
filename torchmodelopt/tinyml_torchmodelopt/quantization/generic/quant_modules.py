@@ -9,7 +9,6 @@ Classes:
 """
 
 import torch
-from typing import Optional
 
 
 class GENERICOffsetScaleShift(torch.nn.Module):

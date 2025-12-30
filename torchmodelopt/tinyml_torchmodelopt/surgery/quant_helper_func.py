@@ -138,10 +138,8 @@ def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, round
     import warnings
     from torch.jit import TracerWarning
     warnings.filterwarnings("ignore", category=TracerWarning)
-    check = scaled_weights > scale_max
-    check = True in check.cpu().detach().numpy()
 
-    if check:
+    if torch.any(scaled_weights > scale_max):
         raise RuntimeError(
             f"Error in quantization.convert :: compute_offset_scale_shift. Scaling could not be converted.\n"
             f"Invalid scale values: {weight.cpu().detach().numpy()}\n"

@@ -21,7 +21,7 @@ Classes:
 
 import torch
 from typing import Optional, Tuple
-from .quant_helper_func import compute_offset_scale_shift
+from ...surgery.quant_helper_func import compute_offset_scale_shift
 
 
 class ReduceSum(torch.nn.Module):
@@ -305,6 +305,8 @@ class AdaptiveAvgPool2d(torch.nn.Module):
                            shape[3] - (self.output_size[1] - 1) * stride_size[1])
             avg_pool_2d = torch.nn.AvgPool2d(kernel_size=kernel_size, stride=stride_size)
             total_kernel_area = kernel_size[0] * kernel_size[1]
+            if total_kernel_area <= 0:
+                raise ValueError(f"Invalid kernel area: {total_kernel_area}. Must be positive.")
             oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(0, 1 / total_kernel_area, num_bits_scale=self.num_bits_scale)
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, 0, 2**self.activation_bw - 1, ndim=2, dim=1)
             # Multiply Module
