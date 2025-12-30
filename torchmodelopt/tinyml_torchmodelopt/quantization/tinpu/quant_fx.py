@@ -31,22 +31,21 @@
 
 import warnings
 import torch
-from torch.fx import GraphModule
 
 import platform
-from typing import List, Tuple, Optional
-
 
 from ..common import *
 from ..base.fx import TinyMLQuantFxBaseModule
 
+from torch.fx import GraphModule
+from typing import List, Tuple, Optional
+
+from ...surgery.quant_helper_func import remove_identity
 from .quant_utils import TINPUQuantizedReplacementUtils
-from .quant_utils import assign_same_observers_for_residual_inputs
-from ... import surgery
 
 
 class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
-    def __init__(self, *args, qconfig_type: Optional[dict] = None, output_int: bool=True, **kwargs) -> None:
+    def __init__(self, *args, qconfig_type: Optional[dict] = None, output_int: bool = True, **kwargs) -> None:
         '''
         The QAT wrapper module does the preparation like in:
         qat_model = quantize_fx.prepare_qat_fx(nn_model, qconfig_mapping, example_input)
@@ -113,7 +112,6 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
 
         backend = 'fbgemm' if platform.system() in ['Windows'] else 'qnnpack'
         super().__init__(*args, qconfig_type=qconfig_type, backend=backend, **kwargs)
-        # assign_same_observers_for_residual_inputs(self.module)
 
     def convert(self, *args, model_qconfig_format: str = TinyMLModelQConfigFormat.TINPU_INT_MODEL, **kwargs):
         '''
@@ -128,10 +126,9 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         '''
         # first convert the model to int
         super().convert(*args, model_qconfig_format=model_qconfig_format, **kwargs)
-        _convert_replacement_func = lambda module, pattern, *largs, **lkwargs: self._convert_replacement(module, pattern, *largs, output_int=self.output_int, **lkwargs)
         # then apply the transformation to required output format
         if model_qconfig_format == TinyMLModelQConfigFormat.TINPU_INT_MODEL:
-            self.module = surgery.replace_unsupported_layers(self.module, replacement_dict={'tinyml_modelopt_quant_replace_types': {'quant_replace_types': _convert_replacement_func}})
+            self.module = self._convert_replacement(self.module, self.output_int)
         return self
 
     def export(self, *args, model_qconfig_format: str = TinyMLModelQConfigFormat.TINPU_INT_MODEL, simplify: bool = True, skipped_optimizers=None, **kwargs):
@@ -202,7 +199,9 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
 
         return replacement_rules
 
-    def _convert_replacement(self, module: GraphModule, pattern, *args, output_int: bool = True, **kwargs) -> GraphModule:
+    def _convert_replacement(self, module: GraphModule, output_int: bool = True) -> GraphModule:
+        module = remove_identity(module)
+        module.delete_all_unused_submodules()
         # Check if the model has batch normalization
         is_batch_normalized = self.is_batch_normalized(module)
         # Convert the module using symbolic trace

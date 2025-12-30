@@ -4,6 +4,7 @@ from torch.fx import GraphModule, Node
 
 from typing import Dict, List, Tuple
 from .quant_modules import *
+from ...surgery.quant_helper_func import is_both_node_equal, remove_hanging_nodes, simple_chain_searcher, add_node_after_node, replace_call_module, replace_call_function_or_method
 
 class TINPUQuantizedReplacementUtils():
     def __init__(self, model: GraphModule, weight_bw: int, activation_bw: int, power2_scale: bool, float_ops: List):
