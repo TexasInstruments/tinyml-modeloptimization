@@ -529,3 +529,50 @@ def assign_same_observers_for_residual_inputs(model: GraphModule):
         if target_name in residual_operators:
             node_1, node_2 = node.args
             assign_same_observers(model, node_1, node_2)
+
+
+def remove_identity(model: torch.nn.Module, verbose_mode: bool = False, **kwargs) -> torch.fx.GraphModule:
+    """Remove `torch.nn.Identity` submodules from a traced model.
+
+    The function traces the input `model` (if it is not already a
+    `GraphModule`) and searches for `call_module` nodes referencing
+    `torch.nn.Identity`. Matching identity nodes are replaced with their
+    input value and the corresponding submodule is removed when it is not
+    referenced elsewhere.
+
+    Parameters
+    - model: `nn.Module` or `GraphModule` to process.
+    - verbose_mode: when True print progress and debug information.
+
+    Returns
+    - A `torch.fx.GraphModule` with identity nodes removed.
+    """
+
+    traced_model = symbolic_trace(model) if not isinstance(model, torch.fx.GraphModule) else model
+    modules = dict(traced_model.named_modules())
+    n = 0
+    nodes = []
+    for node in traced_model.graph.nodes:
+        if (node.op == 'call_module') and isinstance(modules[node.target], torch.nn.Identity):
+            nodes.append(node)
+
+    for node in nodes:
+        try:
+            node.replace_all_uses_with(node.args[0])
+            copy_found = False
+            for node_1 in nodes:
+                if node != node_1 and node.target == node_1.target:
+                    copy_found = True
+                    break
+            if not copy_found:
+                parent_name, name = _get_parent_name(node.target)
+                modules[parent_name].__delattr__(name)
+                modules.pop(node.target, None)
+            traced_model.graph.erase_node(node)
+            n += 1
+        except Exception as e:
+            if verbose_mode:
+                print(n, e)
+
+    lint_and_recompile(traced_model)
+    return traced_model
