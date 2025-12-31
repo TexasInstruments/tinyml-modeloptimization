@@ -65,13 +65,28 @@ class TINPUQuantizedReplacementUtils():
             else:
                 bfs += list(node.users)
         return first_quant_node
+
+    def _get_target_module(self, target_path):
+        parts = target_path.split('.')
+        if target_path.startswith('features.'):
+            module = self.module.features
+            parts = parts[1:]
+        else:
+            module = self.module
+        
+        for part in parts:
+            if hasattr(module, '_modules') and part in module._modules:
+                module = module._modules[part]
+            else:
+                return None
+        return module
     
     def _check_module_before_quant(self) -> bool:
         nodes = self._get_nodes()
         # Checks if there is a module before quantize_per_tensor and after placeholder
         placeholder_node = nodes[0]
         for user in placeholder_node.users:
-            target_module = (lambda p, m: m._modules[p[0]] if len(p) == 1 else (lambda x, y: x._modules[y[0]] if len(y) == 1 else x._modules[y[0]]._modules[y[1]] if len(y) == 2 else x._modules[y[0]]._modules[y[1]]._modules[y[2]])(m._modules[p[0]], p[1:]) if len(p) > 1 else m)(user.target.split('.')[1:] if user.target.startswith('features.') else user.target.split('.'), self.module.features if user.target.startswith('features.') else self.module)
+            target_module = self._get_target_module(user.target)
             if user.op == 'call_module' and isinstance(target_module, torch.nn.Flatten):
                 return True
         return False
