@@ -67,9 +67,10 @@ class TINPUQuantizedReplacementUtils():
         return first_quant_node
 
     def _get_target_module(self, target_path):
-        parts = target_path.split('.')
+        parts = []
         if target_path.startswith('features.'):
             module = self.module.features
+            parts = target_path.split('.')
             parts = parts[1:]
         else:
             module = self.module
@@ -86,9 +87,10 @@ class TINPUQuantizedReplacementUtils():
         # Checks if there is a module before quantize_per_tensor and after placeholder
         placeholder_node = nodes[0]
         for user in placeholder_node.users:
-            target_module = self._get_target_module(user.target)
-            if user.op == 'call_module' and isinstance(target_module, torch.nn.Flatten):
-                return True
+            if user.op == 'call_module':
+                target_module = self._get_target_module(user.target)
+                if isinstance(target_module, torch.nn.Flatten):
+                    return True
         return False
     
     def rename_nodes(self):
