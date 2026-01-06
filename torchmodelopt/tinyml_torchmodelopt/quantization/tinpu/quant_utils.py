@@ -74,7 +74,6 @@ class TINPUQuantizedReplacementUtils():
             parts = parts[1:]
         else:
             module = self.module
-        
         for part in parts:
             if hasattr(module, '_modules') and part in module._modules:
                 module = module._modules[part]
