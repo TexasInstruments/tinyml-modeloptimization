@@ -196,7 +196,8 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
     weight_mixed_precision = qconfig_dict.get('weight', {}).get('mixed_precision', {})
     if weight_mixed_precision:
         qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, weight_mixed_precision)
-    if qconfig_dict.get('partial_quantization'):
+    partial_quantization = qconfig_dict.get('partial_quantization')
+    if partial_quantization:
         qconfig_mapping = apply_partial_quantization(qconfig_mapping, model)
     # activation_mixed_precision = qconfig_dict.get('activation', {}).get('mixed_precision', {})
     # if activation_mixed_precision:
