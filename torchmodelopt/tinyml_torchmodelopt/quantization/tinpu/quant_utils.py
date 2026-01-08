@@ -65,6 +65,21 @@ class TINPUQuantizedReplacementUtils():
             else:
                 bfs += list(node.users)
         return first_quant_node
+
+    def _get_target_module(self, target_path):
+        parts = []
+        if target_path.startswith('features.'):
+            module = self.module.features
+            parts = target_path.split('.')
+            parts = parts[1:]
+        else:
+            module = self.module
+        for part in parts:
+            if hasattr(module, '_modules') and part in module._modules:
+                module = module._modules[part]
+            else:
+                return None
+        return module
     
     def _check_module_before_quant(self) -> bool:
         nodes = self._get_nodes()
@@ -72,7 +87,9 @@ class TINPUQuantizedReplacementUtils():
         placeholder_node = nodes[0]
         for user in placeholder_node.users:
             if user.op == 'call_module':
-                return True
+                target_module = self._get_target_module(user.target)
+                if isinstance(target_module, torch.nn.Flatten):
+                    return True
         return False
     
     def rename_nodes(self):
