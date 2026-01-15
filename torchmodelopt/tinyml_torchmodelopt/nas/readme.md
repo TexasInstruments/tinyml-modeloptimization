@@ -1,6 +1,6 @@
-# Neural Architecture Search (NAS) for TinyML with PyTorch
+# Neural Architecture Search (NAS) for Tiny ML with PyTorch
 
-This module provides a flexible and extensible framework for Neural Architecture Search (NAS) targeting CNN architectures, with a focus on TinyML and resource-constrained environments. It supports differentiable architecture search, resource-aware optimization (memory and compute), and is designed for easy integration into PyTorch projects.
+This module provides a flexible and extensible framework for Neural Architecture Search (NAS) targeting CNN architectures, with a focus on Tiny ML and resource-constrained environments. It supports differentiable architecture search, resource-aware optimization (memory and compute), and is designed for easy integration into PyTorch projects.
 
 ---
 
