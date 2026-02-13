@@ -452,7 +452,7 @@ class LeNet5(nn.Module):
         y = self.relu2(y)
         y = self.pool2(y)
         # y = y.view(y.shape[0], -1)
-        y= torch.flatten(y, 1)
+        y = torch.flatten(y, 1)
         y = self.fc1(y)
         y = self.relu3(y)
         y = self.fc2(y)
