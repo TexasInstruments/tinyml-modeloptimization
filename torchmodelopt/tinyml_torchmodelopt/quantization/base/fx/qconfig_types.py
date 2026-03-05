@@ -33,9 +33,12 @@
 import torch
 from torch.ao.quantization import QConfig, QConfigMapping
 import torch.ao.quantization
+from torch.autograd import grad
+from logging import getLogger
 
 from . import observer_types
 from . import fake_quant_types
+logger = getLogger("root.main.qconfig_types")
 
 
 def get_default_qconfig(qconfig_dict=None):
@@ -124,62 +127,112 @@ def get_default_qconfig(qconfig_dict=None):
 
 
 def apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision):
-
     for bit_width in mixed_precision:
-        # prepare qconfig_dict for current bit_width
-        qconfig_dict['weight']['bitwidth'] = bit_width
-        # prepare torch.ao.quantization.Qconfig for current bit_width
-        qconfig = get_default_qconfig(qconfig_dict=qconfig_dict)
         layers = mixed_precision[bit_width]
-        for layer in layers:
-            qconfig_mapping.set_module_name(layer, qconfig)
-    #
+        if bit_width == 32:
+            for layer in layers:
+                qconfig_mapping.set_module_name(layer, None)
+        else:
+            qconfig_dict['weight']['bitwidth'] = bit_width
+            qconfig_dict['activation']['bitwidth'] = bit_width
+            qconfig = get_default_qconfig(qconfig_dict=qconfig_dict)
+            for layer in layers:
+                qconfig_mapping.set_module_name(layer, qconfig)
     return qconfig_mapping
 
-def get_layers_to_skip(traced_model):
-    layers_to_skip = []
-    graph_nodes = list(traced_model.graph.nodes)
-    input_bn_name = None
-    first_conv_or_linear_name = None
-    last_linear_name = None
-    input_node = None
-    for node in graph_nodes:
-        if node.op == 'placeholder':
-            input_node = node
-            break
-    if input_node:
-        for node in graph_nodes:
-            if node.op == 'call_module' and input_node in node.args:
-                module = traced_model.get_submodule(node.target)
-                if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
-                    input_bn_name = node.target
-                break
-    for node in graph_nodes:
-        if node.op == 'call_module':
-            module = traced_model.get_submodule(node.target)
-            if isinstance(module, (torch.nn.Conv1d, torch.nn.Conv2d, torch.nn.Conv3d, torch.nn.Linear)):
-                first_conv_or_linear_name = node.target
-                break
-    for node in reversed(graph_nodes):
-        if node.op == 'call_module':
-            module = traced_model.get_submodule(node.target)
-            if isinstance(module, torch.nn.Linear):
-                last_linear_name = node.target
-                break
-    if input_bn_name:
-        layers_to_skip.append(input_bn_name)
-    if first_conv_or_linear_name:
-        layers_to_skip.append(first_conv_or_linear_name)
-    if last_linear_name:
-        layers_to_skip.append(last_linear_name)
-    return layers_to_skip
+def compute_hessian_vector_product(model, param, v, inputs, targets, criterion):
+    outputs = model(inputs)
+    loss = criterion(outputs, targets)
+    grads = grad(loss, param, create_graph=True)[0]
+    grad_v_product = torch.sum(grads * v)
+    hvp = grad(grad_v_product, param, retain_graph=True)[0]
+    return hvp
 
-def apply_partial_quantization(qconfig_mapping, model):
-    traced_model = torch.fx.symbolic_trace(model)
-    layers_to_skip = get_layers_to_skip(traced_model)
-    module_to_qconfig = {name: None for name in layers_to_skip}
-    qconfig_mapping.module_name_qconfigs.update(module_to_qconfig)
-    return qconfig_mapping
+def power_iteration(model, param, inputs, targets, criterion, num_eigenvalues=1, num_iterations=100):
+    eigenvalues = []
+    param_shape = param.shape
+    param_size = param.numel()
+    for _ in range(num_eigenvalues):
+        v = torch.randn(param_size, device=param.device)
+        v = v / torch.norm(v)
+        for _ in range(num_iterations):
+            Hv = compute_hessian_vector_product(model, param, v.reshape(param_shape), inputs, targets, criterion)
+            v_new = Hv.flatten()
+            eigenvalue = torch.dot(v_new, v)
+            v = v_new / torch.norm(v_new)
+        eigenvalues.append(eigenvalue.item())
+    return eigenvalues
+
+
+def compute_hessian_eigenvalues(model, inputs, targets, criterion, num_eigenvalues=1, num_iterations=100):
+    eigenvalues = {}
+    was_training = model.training
+    model.eval()
+    inputs = inputs.detach().clone()
+    targets = targets.detach().clone()
+
+    for name, param in model.named_parameters():
+        if param.requires_grad and 'weight' in name:
+            eigenvalues[name] = power_iteration(model, param, inputs, targets, criterion, num_eigenvalues, num_iterations)
+    if was_training:
+        model.train()
+    return eigenvalues
+
+
+def compute_hessian_mixed_precision(model, inputs, targets, criterion,
+                                    num_eigenvalues=1, num_iterations=100, batch_size=128):
+    if inputs is None or targets is None or criterion is None:
+        logger.warning("Hessian-based mixed precision requires inputs, targets, and criterion. Skipping Hessian analysis.")
+        return {}
+    batch_inputs = inputs[:batch_size]
+    batch_targets = targets[:batch_size]
+
+    eigenvalues = compute_hessian_eigenvalues(model, batch_inputs, batch_targets, criterion,
+                                              num_eigenvalues, num_iterations)
+    module_sensitivities = {}
+    for name, eigs in eigenvalues.items():
+        max_eig = max(abs(e) for e in eigs)
+        module_name = name.rsplit('.', 1)[0]
+        if module_name in module_sensitivities:
+            module_sensitivities[module_name] = max(module_sensitivities[module_name], max_eig)
+        else:
+            module_sensitivities[module_name] = max_eig
+    layer_sensitivities = sorted(module_sensitivities.items(), key=lambda x: x[1], reverse=True)
+
+    logger.info("Layer sensitivities (sorted by Hessian eigenvalue, descending):")
+    for layer_name, sensitivity in layer_sensitivities:
+        logger.info(f"  {layer_name}: {sensitivity:.6f}")
+    precision_levels = [32, 8, 4, 2]
+    mixed_precision = {p: [] for p in precision_levels}
+    n = len(layer_sensitivities)
+
+    if n == 0:
+        logger.warning("No quantizable layers found for Hessian analysis.")
+        return mixed_precision
+
+    for i, (layer_name, _) in enumerate(layer_sensitivities):
+        position = i / n
+        if position < 0.2:
+            mixed_precision[32].append(layer_name)
+        elif position < 0.50:
+            mixed_precision[8].append(layer_name)
+        elif position < 0.75:
+            mixed_precision[4].append(layer_name)
+        else:
+            mixed_precision[2].append(layer_name)
+            
+    logger.info("Hessian-based precision assignment:")
+    for p in precision_levels:
+        for layer_name in mixed_precision[p]:
+            try:
+                module = model.get_submodule(layer_name)
+                layer_type = type(module).__name__
+            except AttributeError:
+                layer_type = "unknown"
+            logger.info(f"  {layer_name} ({layer_type}) -> {p}-bit")
+
+    mixed_precision = {k: v for k, v in mixed_precision.items() if v}
+    return mixed_precision
 
 def get_default_qconfig_mapping(model, qconfig_type=None):
     qconfig_dict = qconfig_type
@@ -198,7 +251,11 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
         qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, weight_mixed_precision)
     partial_quantization = qconfig_dict.get('partial_quantization')
     if partial_quantization:
-        qconfig_mapping = apply_partial_quantization(qconfig_mapping, model)
+        inputs = qconfig_dict.get('inputs')
+        targets = qconfig_dict.get('targets')
+        criterion = qconfig_dict.get('criterion')
+        mixed_precision = compute_hessian_mixed_precision(model, inputs, targets, criterion)
+        qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision)
     # activation_mixed_precision = qconfig_dict.get('activation', {}).get('mixed_precision', {})
     # if activation_mixed_precision:
     #     qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, activation_mixed_precision)

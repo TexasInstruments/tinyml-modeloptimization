@@ -73,7 +73,8 @@ class TinyMLQuantizationMethod():
 
 
 class TinyMLQConfigType:
-    def __init__(self, weight_bitwidth: int=8, activation_bitwidth: int=8, partial_quantization: bool=False):
+    def __init__(self, weight_bitwidth: int=8, activation_bitwidth: int=8, partial_quantization: bool=False,
+                 inputs=None, targets=None, criterion=None):
         self.logger = getLogger("root.main.TinyMLQConfigType")
         self.logger.info(f"Quantization Bitwidths: Weight-{weight_bitwidth} Activation- {activation_bitwidth}")
         self.qconfig_type = None
@@ -160,4 +161,12 @@ class TinyMLQConfigType:
             }
         else:
             raise RuntimeError("unsupported quantization parameters")
+
+        if self.qconfig_type is not None and partial_quantization:
+            if inputs is not None:
+                self.qconfig_type['inputs'] = inputs
+            if targets is not None:
+                self.qconfig_type['targets'] = targets
+            if criterion is not None:
+                self.qconfig_type['criterion'] = criterion
 
