@@ -34,16 +34,16 @@ import torch
 import torch.ao.quantization
 
 from . import functional_utils
-from .observer_utils import MovingAverageRangeShrinkFastHistogramObserver, RangeShrinkFastHistogramObserver
+from .observer_utils import MovingAverageRangeShrinkFastHistogramObserver, RangeShrinkFastHistogramObserver, LSQObserver, LSQPerChannelObserver
 
 
 def get_weight_observer_type(base_class=None):
     if base_class is None:
         warnings.warn("please pass appropriate base class for the weight observer")
         base_class = torch.ao.quantization.PerChannelMinMaxObserver
-    #
+
     class SimplePerChannelWeightObserver(base_class):
-        def __init__(self, *args, quant_min=-128, quant_max=+127, qscheme=torch.per_channel_symmetric, power2_scale=False, range_max=None, fixed_range=False, **kwargs):
+        def __init__(self, *args, quant_min=-127, quant_max=+127, qscheme=torch.per_channel_symmetric, power2_scale=False, range_max=None, fixed_range=False, **kwargs):
             super().__init__(*args, quant_min=quant_min, quant_max=quant_max, qscheme=qscheme, **kwargs)
             self.power2_scale = power2_scale
             self.range_max = range_max
@@ -70,10 +70,8 @@ def get_weight_observer_type(base_class=None):
                     self.min_val.fill_(min_val)
                     self.max_val.fill_(max_val)
                 else:
-                    self.min_val = torch.clamp(self.min_val, min=min_val, max=0.0)
-                    self.max_val = torch.clamp(self.max_val, min=0.0, max=max_val)
-                #
-            #
+                    self.min_val.copy_(torch.clamp(self.min_val, min=min_val, max=0.0))
+                    self.max_val.copy_(torch.clamp(self.max_val, min=0.0, max=max_val))
             return x_orig
     return SimplePerChannelWeightObserver
 
@@ -82,7 +80,7 @@ def get_activation_observer_type(base_class):
     if base_class is None:
         warnings.warn("please pass appropriate base class for the activation observer")
         base_class = torch.ao.quantization.MovingAverageMinMaxObserver
-    #
+
     class SimpleActivationObserver(base_class):
         def __init__(self, *args, quant_min=0, quant_max=255, qscheme=torch.per_tensor_affine, power2_scale=False,
                 range_max=None, fixed_range=False, bias_calibration_factor=0.0, **kwargs):
@@ -110,12 +108,11 @@ def get_activation_observer_type(base_class):
                     # this is a hack to reuse super()._calculate_qparams() for this case
                     qscheme_backup = self.qscheme
                     self.qscheme = torch.per_tensor_affine
-                #
+
                 scale, zero_point = super()._calculate_qparams(min_val, max_val)
                 if unsigned_range:
                     # restore qscheme
                     self.qscheme = qscheme_backup
-                #
             else:
                 scale, zero_point = super()._calculate_qparams(min_val, max_val)
 
@@ -134,10 +131,8 @@ def get_activation_observer_type(base_class):
                     self.min_val.fill_(min_val)
                     self.max_val.fill_(max_val)
                 else:
-                    self.min_val = torch.clamp(self.min_val, min=min_val, max=0.0)
-                    self.max_val = torch.clamp(self.max_val, min=0.0, max=max_val)
-                #
-            #
+                    self.min_val.copy_(torch.clamp(self.min_val, min=min_val, max=0.0))
+                    self.max_val.copy_(torch.clamp(self.max_val, min=0.0, max=max_val))
             return x_orig
 
     return SimpleActivationObserver

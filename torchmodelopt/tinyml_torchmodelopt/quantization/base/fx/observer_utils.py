@@ -97,3 +97,86 @@ class MovingAverageRangeShrinkFastHistogramObserver(torch.ao.quantization.MinMax
 class RangeShrinkFastHistogramObserver(MovingAverageRangeShrinkFastHistogramObserver):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, moving_average=False, **kwargs)
+
+
+class LSQObserver(torch.ao.quantization.MinMaxObserver):
+    """Learned Step size Quantization (LSQ) Observer for per-tensor quantization."""
+    STEP_SIZE_INIT_ALPHA = 1.0
+
+    def __init__(
+        self,
+        averaging_constant=0.01,
+        dtype=torch.quint8,
+        qscheme=torch.per_tensor_affine,
+        reduce_range=False,
+        quant_min=None,
+        quant_max=None,
+        step_size_init_alpha=STEP_SIZE_INIT_ALPHA,
+        **kwargs
+    ) -> None:
+        self.averaging_constant = averaging_constant
+        self.step_size_init_alpha = step_size_init_alpha
+        super().__init__(
+            dtype=dtype, qscheme=qscheme, reduce_range=reduce_range,
+            quant_min=quant_min, quant_max=quant_max, **kwargs
+        )
+        self.freeze_observer = False
+
+    def forward(self, x_orig):
+        if x_orig.numel() == 0 or self.freeze_observer:
+            return x_orig
+        x = x_orig.detach().to(self.min_val.dtype)
+        is_first_call = torch.all(torch.isinf(self.min_val)) and torch.all(torch.isinf(self.max_val))
+        min_val_cur, max_val_cur = torch.min(x), torch.max(x)
+        min_val = min_val_cur if is_first_call else self.min_val + self.averaging_constant * (min_val_cur - self.min_val)
+        max_val = max_val_cur if is_first_call else self.max_val + self.averaging_constant * (max_val_cur - self.max_val)
+        self.min_val.copy_(min_val)
+        self.max_val.copy_(max_val)
+        return x_orig
+
+
+class LSQPerChannelObserver(torch.ao.quantization.PerChannelMinMaxObserver):
+    """Learned Step size Quantization (LSQ) Observer for per-channel quantization."""
+    STEP_SIZE_INIT_ALPHA = 1.0
+
+    def __init__(
+        self,
+        averaging_constant=0.01,
+        dtype=torch.qint8,
+        qscheme=torch.per_channel_symmetric,
+        reduce_range=False,
+        quant_min=None,
+        quant_max=None,
+        step_size_init_alpha=STEP_SIZE_INIT_ALPHA,
+        ch_axis=0,
+        **kwargs
+    ) -> None:
+        self.averaging_constant = averaging_constant
+        self.step_size_init_alpha = step_size_init_alpha
+        super().__init__(
+            dtype=dtype, qscheme=qscheme, reduce_range=reduce_range,
+            quant_min=quant_min, quant_max=quant_max, ch_axis=ch_axis, **kwargs
+        )
+        self.freeze_observer = False
+
+    def forward(self, x_orig):
+        if x_orig.numel() == 0 or self.freeze_observer:
+            return x_orig
+        x = x_orig.detach().to(self.min_val.dtype)
+        x_flat = x.view(x.shape[self.ch_axis], -1)
+        min_val_cur = torch.min(x_flat, dim=1)[0]
+        max_val_cur = torch.max(x_flat, dim=1)[0]
+
+        # Initialize buffers if needed
+        if self.min_val.numel() == 0 or self.min_val.shape != min_val_cur.shape:
+            self.min_val.resize_(min_val_cur.shape)
+            self.max_val.resize_(max_val_cur.shape)
+            self.min_val.fill_(float('inf'))
+            self.max_val.fill_(float('-inf'))
+
+        is_first_call = torch.all(torch.isinf(self.min_val)) and torch.all(torch.isinf(self.max_val))
+        min_val = min_val_cur if is_first_call else self.min_val + self.averaging_constant * (min_val_cur - self.min_val)
+        max_val = max_val_cur if is_first_call else self.max_val + self.averaging_constant * (max_val_cur - self.max_val)
+        self.min_val.copy_(min_val)
+        self.max_val.copy_(max_val)
+        return x_orig
