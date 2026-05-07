@@ -49,9 +49,9 @@ class SoftSigmoidFakeQuantize(torch.ao.quantization.FakeQuantize):
         super().__init__(*args, **kwargs)
         self.temperature = 6.0
 
-    def update_temperature(self, t):
+    def update_temperature(self, temperature):
         """Update the temperature parameter for sigmoid approximation."""
-        self.temperature = t
+        self.temperature = temperature
 
     def soft_round(self, x):
         """Compute smooth rounding using temperature-controlled sigmoid.
@@ -60,7 +60,7 @@ class SoftSigmoidFakeQuantize(torch.ao.quantization.FakeQuantize):
             x: Input tensor to round.
 
         Returns:
-            Rounded tensor with smooth gradients for backprop.
+            Rounded tensor with smooth gradients for backpropagation.
         """
         floor_x = self.floor_ste(x)
         delta = x - floor_x
@@ -123,20 +123,6 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
         super().__init__(*args, **kwargs)
         self.temperature = 1.0
 
-    def floor_ste(self, x):
-        """Compute floor with straight-through estimator (STE).
-
-        Uses STE to enable gradients through the non-differentiable floor operation
-        by replacing it with identity in the backward pass.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            Floor of x with STE for gradient computation.
-        """
-        return x + (torch.floor(x) - x).detach()
-
     def update_temperature(self, temperature):
         """Update the temperature parameter for tanh approximation.
 
@@ -157,7 +143,7 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
             eps: Threshold below which soft_round returns identity.
 
         Returns:
-            Rounded tensor with smooth gradients for backprop.
+            Rounded tensor with smooth gradients for backpropagation.
         """
         # Ensure temperature is at least eps to avoid numerical issues and NaNs
         temperature_bounded = torch.maximum(
@@ -180,6 +166,20 @@ class SoftTanhFakeQuantize(torch.ao.quantization.FakeQuantize):
             return torch.where(mask, x, y)
         else:
             return x if temperature < eps else y
+
+    def floor_ste(self, x):
+        """Compute floor with straight-through estimator (STE).
+
+        Uses STE to enable gradients through the non-differentiable floor operation
+        by replacing it with identity in the backward pass.
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            Floor of x with STE for gradient computation.
+        """
+        return x + (torch.floor(x) - x).detach()
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """Forward pass with soft quantization during training.
