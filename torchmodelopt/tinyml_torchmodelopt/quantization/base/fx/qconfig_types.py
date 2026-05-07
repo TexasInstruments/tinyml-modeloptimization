@@ -38,6 +38,83 @@ from . import observer_types
 from . import fake_quant_types
 
 
+def _get_fake_quant_from_name(fake_quant_name):
+    if fake_quant_name == 'soft_tanh':
+        return fake_quant_types.SoftTanhFakeQuantize
+    elif fake_quant_name == 'soft_sigmoid':
+        return fake_quant_types.SoftSigmoidFakeQuantize
+    elif fake_quant_name == 'default':
+        return torch.ao.quantization.FakeQuantize
+    else:
+        raise ValueError(
+            "Invalid soft quantization type. "
+            "Soft Quantization types could be 'soft_tanh', 'soft_sigmoid' and 'default'"
+        )
+
+def _get_observer_class_from_name(observer_name, qscheme, is_weight=True):
+    '''
+    Helper function to select observer class based on observer name and qscheme.
+
+    Args:
+        observer_name (str): Name of the observer ('histogram_range', 'lsq_observer', 'channel_adaptive', or None)
+        qscheme: Quantization scheme (e.g., torch.per_channel_symmetric)
+        is_weight (bool): Whether this is for weight (True) or activation (False)
+
+    Returns:
+        Observer class
+    '''
+    if observer_name == 'lsq_observer':
+        if is_weight:
+            if qscheme == torch.per_channel_symmetric:
+                return observer_types.LSQPerChannelObserver
+            else:
+                return observer_types.LSQObserver
+        else:
+            if qscheme == torch.per_tensor_symmetric or qscheme == torch.per_tensor_affine:
+                return observer_types.LSQObserver
+            else:
+                return observer_types.LSQPerChannelObserver
+    elif observer_name == 'histogram_range':
+        # Choose histogram observer based on quantization scheme
+        if qscheme == torch.per_channel_symmetric:
+            # Use per-channel histogram observer for per_channel quantization
+            return observer_types.RangeShrinkPerChannelHistogramObserver
+        else:
+            # Use standard histogram observer for per_tensor quantization
+            return observer_types.RangeShrinkFastHistogramObserver
+    elif observer_name == 'kl_divergence':
+        # Choose histogram observer based on quantization scheme
+        if qscheme == torch.per_channel_symmetric:
+            # Use per-channel histogram observer for per_channel quantization
+            return observer_types.KLDivergencePerChannelObserver
+        else:
+            # Use standard histogram observer for per_tensor quantization
+            return observer_types.KLDivergenceObserver
+    elif observer_name == 'entropy_based_cutoff':
+        # Choose histogram observer based on quantization scheme
+        if qscheme == torch.per_channel_symmetric:
+            # Use per-channel histogram observer for per_channel quantization
+            return observer_types.EntropyBasedCutoffPerChannelObserver
+        else:
+            # Use standard histogram observer for per_tensor quantization
+            return observer_types.EntropyBasedCutoffObserver
+    elif observer_name is None or observer_name == 'default':
+        # Use default observers based on qscheme if no specific observer requested
+        if is_weight:
+            if qscheme == torch.per_channel_symmetric:
+                # we don't have a histogram observer that can do per_channel_symmetric - so use MinMax
+                return torch.ao.quantization.PerChannelMinMaxObserver
+            else:
+                return torch.ao.quantization.MinMaxObserver
+        else:
+            return torch.ao.quantization.MovingAverageMinMaxObserver
+    else:
+        raise ValueError(
+            f"Invalid observer name: {observer_name}. "
+            "Supported observer names are: 'histogram_range', 'lsq_observer', or None"
+        )
+
+
 def get_default_qconfig(qconfig_dict=None):
     '''
     This default qconfig uses symmetric, power2 quantization.
@@ -53,8 +130,7 @@ def get_default_qconfig(qconfig_dict=None):
     weight_power2_scale = weight_qconfig.get('power2_scale', True)
     weight_range_max = weight_qconfig.get('range_max', None)
     weight_fixed_range = weight_qconfig.get('fixed_range', False)
-    weight_histogram_range = weight_qconfig.get('histogram_range', False)
-    weight_lsq_observer = weight_qconfig.get('lsq_observer', False)
+    weight_observer = weight_qconfig.get('observer', None)
     weight_soft_quant = weight_qconfig.get('soft_quant', 'default')
 
     activation_qconfig = qconfig_dict.get('activation', dict())
@@ -66,40 +142,13 @@ def get_default_qconfig(qconfig_dict=None):
     activation_power2_scale = activation_qconfig.get('power2_scale', True)
     activation_range_max = activation_qconfig.get('range_max', None)
     activation_fixed_range = activation_qconfig.get('fixed_range', False)
-    activation_histogram_range = activation_qconfig.get('histogram_range', False)
-    activation_lsq_observer = activation_qconfig.get('lsq_observer', False)
+    activation_observer = activation_qconfig.get('observer', None)
     bias_calibration_factor = activation_qconfig.get('bias_calibration_factor', 0.0)
     activation_soft_quant = activation_qconfig.get('soft_quant', 'default')
 
-    if weight_lsq_observer:
-        # Choose LSQ observer based on quantization scheme
-        if weight_qscheme == torch.per_channel_symmetric:
-            weight_observer_base_class = observer_types.LSQPerChannelObserver
-        else:
-            weight_observer_base_class = observer_types.LSQObserver
-    elif weight_qscheme == torch.per_channel_symmetric:
-        # we don't have a histogram observer that can do per_channel_symmetric - so use MinMax
-        weight_observer_base_class = torch.ao.quantization.PerChannelMinMaxObserver
-    elif weight_histogram_range:
-        weight_observer_base_class = (
-            observer_types.MovingAverageRangeShrinkFastHistogramObserver
-            if weight_histogram_range == 1
-            else torch.ao.quantization.HistogramObserver
-        )
-    else:
-        weight_observer_base_class = torch.ao.quantization.MinMaxObserver
-
-    if weight_soft_quant == 'soft_tanh':
-        weight_fake_quant_type = fake_quant_types.SoftTanhFakeQuantize
-    elif weight_soft_quant == 'soft_sigmoid':
-        weight_fake_quant_type = fake_quant_types.SoftSigmoidFakeQuantize
-    elif weight_soft_quant == 'default':
-        weight_fake_quant_type = torch.ao.quantization.FakeQuantize
-    else:
-        raise ValueError(
-            "Invalid weight soft quantization type. "
-            "Weight Soft Quantization types could be 'soft_tanh', 'soft_sigmoid' and 'default'"
-        )
+    # Select weight observer based on observer parameter or default behavior
+    weight_observer_base_class = _get_observer_class_from_name(weight_observer, weight_qscheme, is_weight=True)        
+    weight_fake_quant_type = _get_fake_quant_from_name(weight_soft_quant)
 
     weight_fake_quant = weight_fake_quant_type.with_args(
         observer=observer_types.get_weight_observer_type(base_class=weight_observer_base_class),
@@ -107,33 +156,9 @@ def get_default_qconfig(qconfig_dict=None):
         qscheme=weight_qscheme, dtype=weight_dtype, power2_scale=weight_power2_scale,
         range_max=weight_range_max, fixed_range=weight_fixed_range)
 
-    if activation_lsq_observer:
-        # Choose LSQ observer based on quantization scheme
-        if activation_qscheme == torch.per_tensor_symmetric or activation_qscheme == torch.per_tensor_affine:
-            activation_observer_base_class = observer_types.LSQObserver
-        else:
-            # For per-channel activation quantization (less common but supported)
-            activation_observer_base_class = observer_types.LSQPerChannelObserver
-    elif activation_histogram_range:
-        activation_observer_base_class = (
-            observer_types.MovingAverageRangeShrinkFastHistogramObserver
-            if activation_histogram_range == 1
-            else torch.ao.quantization.HistogramObserver
-        )
-    else:
-        activation_observer_base_class = torch.ao.quantization.MovingAverageMinMaxObserver
-
-    if activation_soft_quant == 'soft_tanh':
-        activation_fake_quant_type = fake_quant_types.SoftTanhFakeQuantize
-    elif activation_soft_quant == 'soft_sigmoid':
-        activation_fake_quant_type = fake_quant_types.SoftSigmoidFakeQuantize
-    elif activation_soft_quant == 'default':
-        activation_fake_quant_type = torch.ao.quantization.FakeQuantize
-    else:
-        raise ValueError(
-            "Invalid activation soft quantization type. "
-            "Activation Soft Quantization types could be 'soft_tanh' and 'default'"
-        )
+    # Select activation observer based on observer parameter or default behavior
+    activation_observer_base_class = _get_observer_class_from_name(activation_observer, activation_qscheme, is_weight=False)
+    activation_fake_quant_type = _get_fake_quant_from_name(activation_soft_quant)
 
     activation_fake_quant = activation_fake_quant_type.with_args(
         observer=observer_types.get_activation_observer_type(base_class=activation_observer_base_class),

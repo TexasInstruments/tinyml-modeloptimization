@@ -34,12 +34,15 @@ import torch
 import torch.ao.quantization
 
 from . import functional_utils
-from .observer_utils import MovingAverageRangeShrinkFastHistogramObserver, RangeShrinkFastHistogramObserver, LSQObserver, LSQPerChannelObserver
+from .observer_utils import (RangeShrinkPerChannelHistogramObserver, RangeShrinkFastHistogramObserver,
+                              LSQObserver, LSQPerChannelObserver, KLDivergenceObserver,
+                              KLDivergencePerChannelObserver, EntropyBasedCutoffObserver,
+                              EntropyBasedCutoffPerChannelObserver)
 
 
 def get_weight_observer_type(base_class=None):
     if base_class is None:
-        warnings.warn("please pass appropriate base class for the weight observer")
+        warnings.warn("Please pass appropriate base class for the weight observer, defaulting to PerChannelMinMaxObserver")
         base_class = torch.ao.quantization.PerChannelMinMaxObserver
 
     class SimplePerChannelWeightObserver(base_class):
@@ -101,6 +104,7 @@ def get_activation_observer_type(base_class):
                 max_abs = torch.max(torch.abs(min_val), torch.abs(max_val))
                 min_val = (max_abs * 0.0) if unsigned_range else (-max_abs)
                 max_val = max_abs
+                qscheme_backup = None
                 if unsigned_range:
                     # in unsigned case, we can use a better scale than what pytorch uses (use the full range)
                     # backup qscheme and set it to torch.per_tensor_affine,
