@@ -30,7 +30,9 @@
 #################################################################################
 
 # Imports Torch
+import copy
 import torch
+import torch.ao.quantization.quantize_fx as quantize_fx
 from torch.ao.quantization import QConfig, QConfigMapping
 import torch.ao.quantization
 from torch.autograd import grad
@@ -179,60 +181,268 @@ def compute_hessian_eigenvalues(model, inputs, targets, criterion, num_eigenvalu
     return eigenvalues
 
 
-def compute_hessian_mixed_precision(model, inputs, targets, criterion,
-                                    num_eigenvalues=1, num_iterations=100, batch_size=128):
+def _compute_hessian_sensitivity(model, inputs, targets, criterion,
+                                  num_eigenvalues=1, num_iterations=100, batch_size=128):
+    """Computers per-layer hessian sensitivity"""
     if inputs is None or targets is None or criterion is None:
-        logger.warning("Hessian-based mixed precision requires inputs, targets, and criterion. Skipping Hessian analysis.")
-        return {}
-    batch_inputs = inputs[:batch_size]
-    batch_targets = targets[:batch_size]
-
-    eigenvalues = compute_hessian_eigenvalues(model, batch_inputs, batch_targets, criterion,
-                                              num_eigenvalues, num_iterations)
+        logger.warning("Hessian sensitivity requires inputs, targets, and criterion.")
+        return {}, {}
+    eigenvalues = compute_hessian_eigenvalues(
+        model, inputs[:batch_size], targets[:batch_size], criterion, num_eigenvalues, num_iterations
+    )
     module_sensitivities = {}
+    module_params = {}
     for name, eigs in eigenvalues.items():
         max_eig = max(abs(e) for e in eigs)
         module_name = name.rsplit('.', 1)[0]
+        try:
+            n_params = dict(model.named_parameters())[name].numel()
+        except KeyError:
+            n_params = 0
         if module_name in module_sensitivities:
             module_sensitivities[module_name] = max(module_sensitivities[module_name], max_eig)
+            module_params[module_name] += n_params
         else:
             module_sensitivities[module_name] = max_eig
-    layer_sensitivities = sorted(module_sensitivities.items(), key=lambda x: x[1], reverse=True)
+            module_params[module_name] = n_params
+    if not module_sensitivities:
+        logger.warning("No quantizable layers found for Hessian sensitivity analysis.")
+    else:
+        logger.info("Layer sensitivities (sorted by Hessian eigenvalue, descending):")
+        for name, sens in sorted(module_sensitivities.items(), key=lambda x: x[1], reverse=True):
+            logger.info(f"  {name}: {sens:.6f} ({module_params[name]} params)")
+    return module_sensitivities, module_params
 
-    logger.info("Layer sensitivities (sorted by Hessian eigenvalue, descending):")
-    for layer_name, sensitivity in layer_sensitivities:
-        logger.info(f"  {layer_name}: {sensitivity:.6f}")
-    precision_levels = [32, 8, 4, 2]
+
+def _greedy_bit_allocation(module_sensitivities, module_params, target_avg_bitwidth):
+    """Greedy algorithm for assigning bitwidths among {32, 8, 4, 2} proportional to sensitivity"""
+    if not module_sensitivities:
+        return {}
+    precision_levels = [2, 4, 8, 32]
+    total_params = sum(module_params.values())
+    total_bit_budget = target_avg_bitwidth * total_params
+    layer_bitwidths = {name: 2 for name in module_sensitivities}
+    current_bits_used = sum(2 * module_params[l] for l in layer_bitwidths)
+    while current_bits_used < total_bit_budget:
+        best_layer = best_new_bitwidth = None
+        best_ratio = -float('inf')
+        for layer_name in layer_bitwidths:
+            current_bitwidth = layer_bitwidths[layer_name]
+            next_bitwidth = next((b for b in precision_levels if b > current_bitwidth), None)
+            if next_bitwidth is None:
+                continue
+            n_params = module_params[layer_name]
+            cost = (next_bitwidth - current_bitwidth) * n_params
+            if current_bits_used + cost > total_bit_budget:
+                continue
+            reduction = module_sensitivities[layer_name] * n_params * (
+                1.0 / (4 ** current_bitwidth) - 1.0 / (4 ** next_bitwidth)
+            )
+            ratio = reduction / cost if cost > 0 else 0
+            if ratio > best_ratio:
+                best_ratio, best_layer, best_new_bitwidth = ratio, layer_name, next_bitwidth
+        if best_layer is None:
+            break
+        old_bw = layer_bitwidths[best_layer]
+        layer_bitwidths[best_layer] = best_new_bitwidth
+        current_bits_used += (best_new_bitwidth - old_bw) * module_params[best_layer]
     mixed_precision = {p: [] for p in precision_levels}
-    n = len(layer_sensitivities)
+    for layer_name, bitwidth in layer_bitwidths.items():
+        mixed_precision[bitwidth].append(layer_name)
+    return {k: v for k, v in mixed_precision.items() if v}
 
-    if n == 0:
-        logger.warning("No quantizable layers found for Hessian analysis.")
-        return mixed_precision
 
-    for i, (layer_name, _) in enumerate(layer_sensitivities):
-        position = i / n
-        if position < 0.2:
-            mixed_precision[32].append(layer_name)
-        elif position < 0.50:
-            mixed_precision[8].append(layer_name)
-        elif position < 0.75:
-            mixed_precision[4].append(layer_name)
-        else:
-            mixed_precision[2].append(layer_name)
-            
-    logger.info("Hessian-based precision assignment:")
-    for p in precision_levels:
+def compute_hessian_mixed_precision(model, inputs, targets, criterion,
+                                    num_eigenvalues=1, num_iterations=100, batch_size=128,
+                                    target_avg_bitwidth=9.0):
+    if inputs is None or targets is None or criterion is None:
+        logger.warning("Hessian-based mixed precision requires inputs, targets, and criterion. Skipping Hessian analysis.")
+        return {}
+    module_sensitivities, module_params = _compute_hessian_sensitivity(
+        model, inputs, targets, criterion, num_eigenvalues, num_iterations, batch_size
+    )
+    if not module_sensitivities:
+        return {}
+    total_params = sum(module_params.values())
+    total_bit_budget = target_avg_bitwidth * total_params
+    logger.info(f"Total parameters: {total_params}")
+    logger.info(f"Target average bitwidth: {target_avg_bitwidth}")
+    logger.info(f"Total bit budget: {total_bit_budget}")
+    logger.info("Starting greedy bit allocation...")
+    mixed_precision = _greedy_bit_allocation(module_sensitivities, module_params, target_avg_bitwidth)
+    actual_bits = sum(bw * sum(module_params[l] for l in layers) for bw, layers in mixed_precision.items())
+    actual_avg = actual_bits / total_params if total_params > 0 else 0
+    logger.info(f"Bit allocation complete. Actual average bitwidth: {actual_avg:.2f}")
+    logger.info(f"Bits used: {actual_bits} / {total_bit_budget}")
+    logger.info("Hessian-based precision assignment (greedy bit budget):")
+    for p in sorted(mixed_precision.keys()):
         for layer_name in mixed_precision[p]:
             try:
-                module = model.get_submodule(layer_name)
-                layer_type = type(module).__name__
+                layer_type = type(model.get_submodule(layer_name)).__name__
             except AttributeError:
                 layer_type = "unknown"
-            logger.info(f"  {layer_name} ({layer_type}) -> {p}-bit")
-
-    mixed_precision = {k: v for k, v in mixed_precision.items() if v}
+            logger.info(f"  {layer_name} ({layer_type}) -> {p}-bit ({module_params[layer_name]} params)")
     return mixed_precision
+
+def calibrate_and_evaluate(
+    model: torch.nn.Module,
+    qconfig_mapping,
+    calibration_dataloader,
+    eval_dataloader,
+    task_type: str,
+    example_inputs,
+    device=None,
+    num_calibration_batches: int = None,
+) -> float:
+    """ Calibration for finding best avg. bitwidth to be assigned. Only a single evaluation step. Binary search algorithm stopping criteria"""
+    model_copy = copy.deepcopy(model)
+    try:
+        device = next(model_copy.parameters()).device
+    except StopIteration:
+        device = torch.device(device) if device is not None else torch.device('cpu')
+    model_copy = model_copy.to(device)
+    model_copy.eval()
+    prepared = quantize_fx.prepare_qat_fx(model_copy, qconfig_mapping, example_inputs)
+    prepared.eval()
+    with torch.no_grad():
+        for batch_idx, (_, inputs, _) in enumerate(calibration_dataloader):
+            if num_calibration_batches is not None and batch_idx >= num_calibration_batches:
+                break
+            if device is not None:
+                inputs = inputs.to(device)
+            prepared(inputs.float())
+    prepared.eval()
+    all_preds = []
+    all_inputs_eval = []
+    all_targets = []
+    with torch.no_grad():
+        for _, inputs, targets in eval_dataloader:
+            if device is not None:
+                inputs = inputs.to(device)
+                targets = targets.to(device)
+            inputs_f = inputs.float()
+            preds = prepared(inputs_f)
+            all_preds.append(preds)
+            all_inputs_eval.append(inputs_f)
+            all_targets.append(targets)
+
+    all_preds = torch.cat(all_preds, dim=0)
+    all_inputs_eval = torch.cat(all_inputs_eval, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
+
+    task_lower = task_type.lower()
+    if 'classification' in task_lower:
+        accuracy = (all_preds.argmax(dim=1) == all_targets).float().mean().item()
+        return accuracy
+    elif 'anomaly' in task_lower:
+        mse = torch.mean((all_preds - all_inputs_eval) ** 2).item()
+        return mse
+    elif 'regression' in task_lower or 'forecasting' in task_lower:
+        ss_res = torch.sum((all_targets.float() - all_preds.float()) ** 2)
+        ss_tot = torch.sum((all_targets.float() - all_targets.float().mean()) ** 2)
+        r2 = (1.0 - ss_res / ss_tot).item() if ss_tot.item() != 0.0 else float('nan')
+        return r2
+    else:
+        logger.warning(f"calibrate_and_evaluate: unknown task_type '{task_type}', returning nan")
+        return float('nan')
+
+def find_optimal_bitwidth_binary_search(
+    model: torch.nn.Module,
+    calibration_dataloader,
+    eval_dataloader,
+    task_type: str,
+    float_metric: float,
+    example_inputs,
+    module_sensitivities: dict,
+    module_params: dict,
+    qconfig_dict: dict = None,
+    classification_tolerance: float = 0.05,
+    regression_tolerance: float = 0.05,
+    anomaly_tolerance : float = 2,
+    num_calibration_batches: int = None,
+    device=None,
+) -> float:
+    """
+    Binary search over target average bitwidths """
+    task_lower = task_type.lower()
+    if 'classification' in task_lower:
+        range_lo, range_hi = 4, 8
+        tolerance = classification_tolerance
+        higher_is_better = True
+    elif 'anomaly' in task_lower:
+        range_lo, range_hi = 4, 8
+        tolerance = anomaly_tolerance
+        higher_is_better = False
+    else:
+        range_lo, range_hi = 4, 12
+        tolerance = regression_tolerance
+        higher_is_better = True
+
+    if float_metric is None:
+        logger.warning(
+            "find_optimal_bitwidth_binary_search: float_metric is None, "
+            f"defaulting to max target_avg_bitwidth {range_hi}"
+        )
+        return range_hi
+    
+    if higher_is_better:
+        threshold = float_metric * (1.0 - tolerance)
+    else:
+        threshold = float_metric * (1.0 + tolerance)
+
+    logger.info(
+        f"Binary search bitwidth selection | task={task_type} | "
+        f"float_metric={float_metric:.4f} | threshold={threshold:.4f} | "
+        f"higher_is_better={higher_is_better} | search range=[{range_lo}, {range_hi}]"
+    )
+
+    base = qconfig_dict or {}
+    best_bitwidth = range_hi
+    lo, hi = range_lo, range_hi
+
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        mixed_precision = _greedy_bit_allocation(module_sensitivities, module_params, mid)
+        base_bw = min(mid, 8)
+        bw_qconfig_dict = {
+            'weight': {**base.get('weight', {}), 'bitwidth': base_bw},
+            'activation': {**base.get('activation', {}), 'bitwidth': base_bw},
+        }
+        probe_mapping = QConfigMapping().set_global(get_default_qconfig(bw_qconfig_dict))
+        qcd_copy = {'weight': dict(base.get('weight', {})), 'activation': dict(base.get('activation', {}))}
+        probe_mapping = apply_mixed_precision(probe_mapping, qcd_copy, mixed_precision)
+        metric = calibrate_and_evaluate(
+            model=model,
+            qconfig_mapping=probe_mapping,
+            calibration_dataloader=calibration_dataloader,
+            eval_dataloader=eval_dataloader,
+            task_type=task_type,
+            example_inputs=example_inputs,
+            device=device,
+            num_calibration_batches=num_calibration_batches,
+        )
+        if metric != metric:  
+            passes = False
+        elif higher_is_better:
+            passes = metric >= threshold
+        else:
+            passes = metric <= threshold
+        logger.info(
+            f"  target_avg_bitwidth={mid} | metric={metric:.4f} | "
+            f"threshold={threshold:.4f} | {'PASS' if passes else 'FAIL'}"
+        )
+        if passes:
+            best_bitwidth = mid
+            hi = mid - 1
+        else:
+            lo = mid + 1
+    if best_bitwidth == range_hi:
+        logger.warning(
+            f"find_optimal_bitwidth_binary_search: no target_avg below {range_hi} "
+            f"passed the threshold; using {range_hi}"
+        )
+    logger.info(f"Binary search complete | selected target_avg_bitwidth={best_bitwidth}")
+    return best_bitwidth
 
 def get_default_qconfig_mapping(model, qconfig_type=None):
     qconfig_dict = qconfig_type
@@ -254,11 +464,48 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
         inputs = qconfig_dict.get('inputs')
         targets = qconfig_dict.get('targets')
         criterion = qconfig_dict.get('criterion')
-        mixed_precision = compute_hessian_mixed_precision(model, inputs, targets, criterion)
+        module_sensitivities, module_params = _compute_hessian_sensitivity(
+            model, inputs, targets, criterion
+        )
+        if qconfig_dict.get('calibration_dataloader') is not None and module_sensitivities:
+            optimal_bitwidth = find_optimal_bitwidth_binary_search(
+                model=model,
+                calibration_dataloader=qconfig_dict.get('calibration_dataloader'),
+                eval_dataloader=qconfig_dict.get('eval_dataloader'),
+                task_type=qconfig_dict.get('task_type', 'classification'),
+                float_metric=qconfig_dict.get('float_metric'),
+                example_inputs=qconfig_dict.get('example_inputs'),
+                module_sensitivities=module_sensitivities,
+                module_params=module_params,
+                qconfig_dict=qconfig_dict,
+                device=qconfig_dict.get('device'),
+            )
+        total_params = sum(module_params.values())
+        total_bit_budget = optimal_bitwidth * total_params
+        logger.info(f"Total parameters: {total_params}")
+        logger.info(f"Target average bitwidth: {optimal_bitwidth}")
+        logger.info(f"Total bit budget: {total_bit_budget}")
+        logger.info("Starting greedy bit allocation...")
+        mixed_precision = _greedy_bit_allocation(module_sensitivities, module_params, optimal_bitwidth)
+        actual_bits = sum(bw * sum(module_params[l] for l in layers) for bw, layers in mixed_precision.items())
+        actual_avg = actual_bits / total_params if total_params > 0 else 0
+        logger.info(f"Bit allocation complete. Actual average bitwidth: {actual_avg:.2f}")
+        logger.info(f"Bits used: {actual_bits} / {total_bit_budget}")
+        logger.info("Hessian-based precision assignment (greedy bit budget):")
+        for p in sorted(mixed_precision.keys()):
+            for layer_name in mixed_precision[p]:
+                try:
+                    layer_type = type(model.get_submodule(layer_name)).__name__
+                except AttributeError:
+                    layer_type = "unknown"
+                logger.info(f"  {layer_name} ({layer_type}) -> {p}-bit ({module_params[layer_name]} params)")
+        final_bw = min(int(optimal_bitwidth), 8)
+        bw_qconfig_dict = {
+            'weight': {**qconfig_dict.get('weight', {}), 'bitwidth': final_bw},
+            'activation': {**qconfig_dict.get('activation', {}), 'bitwidth': final_bw},
+        }
+        qconfig_mapping = QConfigMapping().set_global(get_default_qconfig(bw_qconfig_dict))
         qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision)
-    # activation_mixed_precision = qconfig_dict.get('activation', {}).get('mixed_precision', {})
-    # if activation_mixed_precision:
-    #     qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, activation_mixed_precision)
 
     return qconfig_mapping
     

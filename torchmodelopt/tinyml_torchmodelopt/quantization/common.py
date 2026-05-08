@@ -74,7 +74,9 @@ class TinyMLQuantizationMethod():
 
 class TinyMLQConfigType:
     def __init__(self, weight_bitwidth: int=8, activation_bitwidth: int=8, partial_quantization: bool=False,
-                 inputs=None, targets=None, criterion=None):
+                 inputs=None, targets=None, criterion=None,
+                 calibration_dataloader=None, eval_dataloader=None,
+                 task_type: str=None, float_metric: float=None, example_inputs=None):
         self.logger = getLogger("root.main.TinyMLQConfigType")
         self.logger.info(f"Quantization Bitwidths: Weight-{weight_bitwidth} Activation- {activation_bitwidth}")
         self.qconfig_type = None
@@ -169,4 +171,14 @@ class TinyMLQConfigType:
                 self.qconfig_type['targets'] = targets
             if criterion is not None:
                 self.qconfig_type['criterion'] = criterion
+            if calibration_dataloader is not None:
+                self.qconfig_type['calibration_dataloader'] = calibration_dataloader
+            if eval_dataloader is not None:
+                self.qconfig_type['eval_dataloader'] = eval_dataloader
+            if task_type is not None:
+                self.qconfig_type['task_type'] = task_type
+            if float_metric is not None:
+                self.qconfig_type['float_metric'] = float_metric
+            if example_inputs is not None:
+                self.qconfig_type['example_inputs'] = example_inputs
 
