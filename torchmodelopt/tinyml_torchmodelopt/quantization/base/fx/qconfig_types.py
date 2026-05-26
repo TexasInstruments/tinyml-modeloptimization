@@ -143,7 +143,8 @@ def apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision):
     return qconfig_mapping
 
 def compute_hessian_vector_product(model, param, v, inputs, targets, criterion):
-    outputs = model(inputs)
+    with torch.backends.cudnn.flags(enabled=False):
+        outputs = model(inputs)
     loss = criterion(outputs, targets)
     grads = grad(loss, param, create_graph=True)[0]
     grad_v_product = torch.sum(grads * v)
@@ -169,7 +170,11 @@ def power_iteration(model, param, inputs, targets, criterion, num_eigenvalues=1,
 def compute_hessian_eigenvalues(model, inputs, targets, criterion, num_eigenvalues=1, num_iterations=100):
     eigenvalues = {}
     was_training = model.training
-    model.eval()
+    has_rnn = any(isinstance(m, torch.nn.RNNBase) for m in model.modules())
+    if has_rnn:
+        model.train()
+    else:
+        model.eval()
     inputs = inputs.detach().clone()
     targets = targets.detach().clone()
 
@@ -178,6 +183,8 @@ def compute_hessian_eigenvalues(model, inputs, targets, criterion, num_eigenvalu
             eigenvalues[name] = power_iteration(model, param, inputs, targets, criterion, num_eigenvalues, num_iterations)
     if was_training:
         model.train()
+    else:
+        model.eval()
     return eigenvalues
 
 
@@ -312,9 +319,16 @@ def calibrate_and_evaluate(
                 inputs = inputs.to(device)
             prepared(inputs.float())
     prepared.eval()
-    all_preds = []
-    all_inputs_eval = []
-    all_targets = []
+    task_lower = task_type.lower()
+    correct = 0
+    total_samples = 0
+    running_sum = 0.0
+    total_elements = 0
+    ss_res = 0.0
+    sum_y = 0.0
+    sum_y2 = 0.0
+    reg_count = 0
+
     with torch.no_grad():
         for _, inputs, targets in eval_dataloader:
             if device is not None:
@@ -322,26 +336,38 @@ def calibrate_and_evaluate(
                 targets = targets.to(device)
             inputs_f = inputs.float()
             preds = prepared(inputs_f)
-            all_preds.append(preds)
-            all_inputs_eval.append(inputs_f)
-            all_targets.append(targets)
 
-    all_preds = torch.cat(all_preds, dim=0)
-    all_inputs_eval = torch.cat(all_inputs_eval, dim=0)
-    all_targets = torch.cat(all_targets, dim=0)
+            if 'classification' in task_lower:
+                correct += (preds.argmax(dim=1) == targets).sum().item()
+                total_samples += targets.size(0)
+            elif 'anomaly' in task_lower:
+                running_sum += torch.sum((preds - inputs_f) ** 2).item()
+                total_elements += inputs_f.numel()
+            elif 'forecasting' in task_lower:
+                p = preds.float().reshape(targets.shape)
+                t = targets.float()
+                running_sum += torch.sum(
+                    2.0 * torch.abs(p - t) /
+                    (torch.abs(p) + torch.abs(t) + 1e-8)
+                ).item() * 100
+                total_elements += t.numel()
+            elif 'regression' in task_lower:
+                t = targets.float().flatten()
+                p = preds.float().flatten()
+                ss_res += torch.sum((t - p) ** 2).item()
+                sum_y += torch.sum(t).item()
+                sum_y2 += torch.sum(t ** 2).item()
+                reg_count += t.numel()
 
-    task_lower = task_type.lower()
     if 'classification' in task_lower:
-        accuracy = (all_preds.argmax(dim=1) == all_targets).float().mean().item()
-        return accuracy
+        return correct / total_samples if total_samples > 0 else float('nan')
     elif 'anomaly' in task_lower:
-        mse = torch.mean((all_preds - all_inputs_eval) ** 2).item()
-        return mse
-    elif 'regression' in task_lower or 'forecasting' in task_lower:
-        ss_res = torch.sum((all_targets.float() - all_preds.float()) ** 2)
-        ss_tot = torch.sum((all_targets.float() - all_targets.float().mean()) ** 2)
-        r2 = (1.0 - ss_res / ss_tot).item() if ss_tot.item() != 0.0 else float('nan')
-        return r2
+        return running_sum / total_elements if total_elements > 0 else float('nan')
+    elif 'forecasting' in task_lower:
+        return running_sum / total_elements if total_elements > 0 else float('nan')
+    elif 'regression' in task_lower:
+        ss_tot = sum_y2 - (sum_y ** 2) / reg_count if reg_count > 0 else 0.0
+        return (1.0 - ss_res / ss_tot) if ss_tot != 0.0 else float('nan')
     else:
         logger.warning(f"calibrate_and_evaluate: unknown task_type '{task_type}', returning nan")
         return float('nan')
@@ -358,7 +384,8 @@ def find_optimal_bitwidth_binary_search(
     qconfig_dict: dict = None,
     classification_tolerance: float = 0.05,
     regression_tolerance: float = 0.05,
-    anomaly_tolerance : float = 2,
+    anomaly_tolerance: float = 2,
+    forecasting_tolerance: float = 2.0,
     num_calibration_batches: int = None,
     device=None,
 ) -> float:
@@ -372,6 +399,10 @@ def find_optimal_bitwidth_binary_search(
     elif 'anomaly' in task_lower:
         range_lo, range_hi = 4, 8
         tolerance = anomaly_tolerance
+        higher_is_better = False
+    elif 'forecasting' in task_lower:
+        range_lo, range_hi = 4, 32
+        tolerance = forecasting_tolerance
         higher_is_better = False
     else:
         range_lo, range_hi = 4, 12
@@ -504,8 +535,15 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
             'weight': {**qconfig_dict.get('weight', {}), 'bitwidth': final_bw},
             'activation': {**qconfig_dict.get('activation', {}), 'bitwidth': final_bw},
         }
-        qconfig_mapping = QConfigMapping().set_global(get_default_qconfig(bw_qconfig_dict))
-        qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision)
+        if any(bw < 32 for bw in mixed_precision.keys()):
+            qconfig_mapping = QConfigMapping().set_global(get_default_qconfig(bw_qconfig_dict))
+            qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, mixed_precision)
+        else:
+            logger.warning(
+                "All layers assigned 32-bit by binary search — no compression found. "
+                "Disabling quantization entirely; model will remain float32."
+            )
+            qconfig_mapping = QConfigMapping()
 
     return qconfig_mapping
     
