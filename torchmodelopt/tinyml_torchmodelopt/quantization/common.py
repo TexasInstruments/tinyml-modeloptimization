@@ -73,12 +73,15 @@ class TinyMLQuantizationMethod():
 
 
 class TinyMLQConfigType:
-    def __init__(self, weight_bitwidth: int=8, activation_bitwidth: int=8, partial_quantization: bool=False,
+    def __init__(self, weight_bitwidth: int=8, activation_bitwidth: int=8, auto_quantization: bool=True,
                  inputs=None, targets=None, criterion=None,
                  calibration_dataloader=None, eval_dataloader=None,
                  task_type: str=None, float_metric: float=None, example_inputs=None):
         self.logger = getLogger("root.main.TinyMLQConfigType")
-        self.logger.info(f"Quantization Bitwidths: Weight-{weight_bitwidth} Activation- {activation_bitwidth}")
+        if auto_quantization:
+            self.logger.info("Quantization Bitwidths: Auto quantization")
+        else:
+            self.logger.info(f"Quantization Bitwidths: Weight-{weight_bitwidth} Activation-{activation_bitwidth}")
         self.qconfig_type = None
         if weight_bitwidth is None or activation_bitwidth is None:
             '''
@@ -117,7 +120,7 @@ class TinyMLQConfigType:
                     'range_max': None,
                     'fixed_range': False
                 },
-                'partial_quantization' : partial_quantization,
+                'auto_quantization' : auto_quantization,
             }
         elif weight_bitwidth == 4:
             self.qconfig_type = {
@@ -137,7 +140,7 @@ class TinyMLQConfigType:
                     'fixed_range': False,
                     'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
                 },
-                'partial_quantization' : partial_quantization,
+                'auto_quantization' : auto_quantization,
             }
         elif weight_bitwidth == 2:
             self.qconfig_type = {
@@ -159,12 +162,12 @@ class TinyMLQConfigType:
                     'fixed_range': False,
                     'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
                 },
-                'partial_quantization' : partial_quantization,
+                'auto_quantization' : auto_quantization,
             }
         else:
             raise RuntimeError("unsupported quantization parameters")
 
-        if self.qconfig_type is not None and partial_quantization:
+        if self.qconfig_type is not None and auto_quantization:
             if inputs is not None:
                 self.qconfig_type['inputs'] = inputs
             if targets is not None:

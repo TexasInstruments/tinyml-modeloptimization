@@ -37,6 +37,7 @@ from torch.ao.quantization import QConfig, QConfigMapping
 import torch.ao.quantization
 from torch.autograd import grad
 from logging import getLogger
+from tabulate import tabulate
 
 from . import observer_types
 from . import fake_quant_types
@@ -258,39 +259,6 @@ def _greedy_bit_allocation(module_sensitivities, module_params, target_avg_bitwi
         mixed_precision[bitwidth].append(layer_name)
     return {k: v for k, v in mixed_precision.items() if v}
 
-
-def compute_hessian_mixed_precision(model, inputs, targets, criterion,
-                                    num_eigenvalues=1, num_iterations=100, batch_size=128,
-                                    target_avg_bitwidth=9.0):
-    if inputs is None or targets is None or criterion is None:
-        logger.warning("Hessian-based mixed precision requires inputs, targets, and criterion. Skipping Hessian analysis.")
-        return {}
-    module_sensitivities, module_params = _compute_hessian_sensitivity(
-        model, inputs, targets, criterion, num_eigenvalues, num_iterations, batch_size
-    )
-    if not module_sensitivities:
-        return {}
-    total_params = sum(module_params.values())
-    total_bit_budget = target_avg_bitwidth * total_params
-    logger.info(f"Total parameters: {total_params}")
-    logger.info(f"Target average bitwidth: {target_avg_bitwidth}")
-    logger.info(f"Total bit budget: {total_bit_budget}")
-    logger.info("Starting greedy bit allocation...")
-    mixed_precision = _greedy_bit_allocation(module_sensitivities, module_params, target_avg_bitwidth)
-    actual_bits = sum(bw * sum(module_params[l] for l in layers) for bw, layers in mixed_precision.items())
-    actual_avg = actual_bits / total_params if total_params > 0 else 0
-    logger.info(f"Bit allocation complete. Actual average bitwidth: {actual_avg:.2f}")
-    logger.info(f"Bits used: {actual_bits} / {total_bit_budget}")
-    logger.info("Hessian-based precision assignment (greedy bit budget):")
-    for p in sorted(mixed_precision.keys()):
-        for layer_name in mixed_precision[p]:
-            try:
-                layer_type = type(model.get_submodule(layer_name)).__name__
-            except AttributeError:
-                layer_type = "unknown"
-            logger.info(f"  {layer_name} ({layer_type}) -> {p}-bit ({module_params[layer_name]} params)")
-    return mixed_precision
-
 def calibrate_and_evaluate(
     model: torch.nn.Module,
     qconfig_mapping,
@@ -490,8 +458,13 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
     weight_mixed_precision = qconfig_dict.get('weight', {}).get('mixed_precision', {})
     if weight_mixed_precision:
         qconfig_mapping = apply_mixed_precision(qconfig_mapping, qconfig_dict, weight_mixed_precision)
-    partial_quantization = qconfig_dict.get('partial_quantization')
-    if partial_quantization:
+    auto_quantization = qconfig_dict.get('auto_quantization')
+    if auto_quantization:
+        logger.warning(
+            "auto_quantization=True: quantization_weight_bitwidth and quantization_activation_bitwidth "
+            "will be overridden by Hessian-based auto quantization. "
+            "Set auto_quantization=False in the config.yaml file for uniform specified bitwidths."
+        )
         inputs = qconfig_dict.get('inputs')
         targets = qconfig_dict.get('targets')
         criterion = qconfig_dict.get('criterion')
@@ -522,14 +495,18 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
         actual_avg = actual_bits / total_params if total_params > 0 else 0
         logger.info(f"Bit allocation complete. Actual average bitwidth: {actual_avg:.2f}")
         logger.info(f"Bits used: {actual_bits} / {total_bit_budget}")
-        logger.info("Hessian-based precision assignment (greedy bit budget):")
+        rows = []
         for p in sorted(mixed_precision.keys()):
             for layer_name in mixed_precision[p]:
                 try:
                     layer_type = type(model.get_submodule(layer_name)).__name__
                 except AttributeError:
                     layer_type = "unknown"
-                logger.info(f"  {layer_name} ({layer_type}) -> {p}-bit ({module_params[layer_name]} params)")
+                params = module_params[layer_name]
+                pct = 100.0 * params / total_params if total_params > 0 else 0.0
+                rows.append([f"{layer_name} ({layer_type})", p, params, f"{pct:.2f}%"])
+        logger.info("Hessian-based precision assignment (greedy bit budget):\n{}".format(
+            tabulate(rows, headers=["Layer (Type)", "Assigned bitwidth", "Params", "% of Total Params"], tablefmt="grid")))
         final_bw = min(int(optimal_bitwidth), 8)
         bw_qconfig_dict = {
             'weight': {**qconfig_dict.get('weight', {}), 'bitwidth': final_bw},
