@@ -398,10 +398,10 @@ def find_optimal_bitwidth_binary_search(
     module_sensitivities: dict,
     module_params: dict,
     qconfig_dict: dict = None,
-    classification_tolerance: float = 0.05,
-    regression_tolerance: float = 0.05,
-    anomaly_tolerance: float = 2,
-    forecasting_tolerance: float = 2.0,
+    autoquant_tolerance_classification: float = 0.05, # fraction  — 0.05 = 5% accuracy drop tolerated
+    autoquant_tolerance_regression: float = 0.05, # fraction  — 0.05 = 5% R² drop tolerated
+    autoquant_tolerance_anomaly: float = 2, # multiplier — 2 = 3x SMAPE increase tolerated
+    autoquant_tolerance_forecasting: float = 2.0,  # multiplier — 2 = 3x MSE increase tolerated
     num_calibration_batches: int = None,
     device=None,
 ) -> float:
@@ -410,19 +410,19 @@ def find_optimal_bitwidth_binary_search(
     task_lower = task_type.lower()
     if 'classification' in task_lower:
         range_lo, range_hi = 4, 8
-        tolerance = classification_tolerance
+        tolerance = autoquant_tolerance_classification
         higher_is_better = True
     elif 'anomaly' in task_lower:
         range_lo, range_hi = 4, 8
-        tolerance = anomaly_tolerance
+        tolerance = autoquant_tolerance_anomaly
         higher_is_better = False
     elif 'forecasting' in task_lower:
         range_lo, range_hi = 4, 32
-        tolerance = forecasting_tolerance
+        tolerance = autoquant_tolerance_forecasting
         higher_is_better = False
     else:
         range_lo, range_hi = 4, 12
-        tolerance = regression_tolerance
+        tolerance = autoquant_tolerance_regression
         higher_is_better = True
 
     if float_metric is None:
@@ -520,7 +520,7 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
             model, inputs, targets, criterion
         )
         if qconfig_dict.get('calibration_dataloader') is not None and module_sensitivities:
-            optimal_bitwidth = find_optimal_bitwidth_binary_search(
+            bsearch_kwargs = dict(
                 model=model,
                 calibration_dataloader=qconfig_dict.get('calibration_dataloader'),
                 eval_dataloader=qconfig_dict.get('eval_dataloader'),
@@ -532,6 +532,15 @@ def get_default_qconfig_mapping(model, qconfig_type=None):
                 qconfig_dict=qconfig_dict,
                 device=qconfig_dict.get('device'),
             )
+            for tolerance_key in (
+                'autoquant_tolerance_classification',
+                'autoquant_tolerance_regression',
+                'autoquant_tolerance_anomaly',
+                'autoquant_tolerance_forecasting',
+            ):
+                if qconfig_dict.get(tolerance_key) is not None:
+                    bsearch_kwargs[tolerance_key] = qconfig_dict[tolerance_key]
+            optimal_bitwidth = find_optimal_bitwidth_binary_search(**bsearch_kwargs)
         total_params = sum(module_params.values())
         total_bit_budget = optimal_bitwidth * total_params
         logger.info(f"Total parameters: {total_params}")

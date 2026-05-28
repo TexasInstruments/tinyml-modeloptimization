@@ -76,7 +76,8 @@ class TinyMLQConfigType:
     def __init__(self, weight_bitwidth: int=8, activation_bitwidth: int=8, auto_quantization: bool=True,
                  inputs=None, targets=None, criterion=None,
                  calibration_dataloader=None, eval_dataloader=None,
-                 task_type: str=None, float_metric: float=None, example_inputs=None):
+                 task_type: str=None, float_metric: float=None, example_inputs=None,
+                 **kwargs):
         self.logger = getLogger("root.main.TinyMLQConfigType")
         if auto_quantization:
             self.logger.info("Quantization Bitwidths: Auto quantization")
@@ -182,4 +183,12 @@ class TinyMLQConfigType:
                 self.qconfig_type['float_metric'] = float_metric
             if example_inputs is not None:
                 self.qconfig_type['example_inputs'] = example_inputs
+            for key in (
+                'autoquant_tolerance_classification',
+                'autoquant_tolerance_regression',
+                'autoquant_tolerance_forecasting',
+                'autoquant_tolerance_anomaly',
+            ):
+                if kwargs.get(key) is not None:
+                    self.qconfig_type[key] = kwargs[key]
 
