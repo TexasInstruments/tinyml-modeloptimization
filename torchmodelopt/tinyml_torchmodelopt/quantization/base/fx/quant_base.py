@@ -300,8 +300,6 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
                                  fake_quant_types.SoftSigmoidFakeQuantize)):
                 temperature = self.temperature_log_space[self.num_epochs_tracked]
                 module.update_temperature(temperature)
-            elif isinstance(module, fake_quant_types.DBQFakeQuantize):
-                module.update_temperature()
 
     def freeze(self, freeze_bn=True, freeze_observers=True):
         """Freeze batch norm and/or observer statistics.
