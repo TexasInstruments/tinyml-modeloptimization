@@ -250,13 +250,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'default' # 'soft_sigmoid' 'soft_tanh' 'default'
+                'soft_quant': 'default' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
+                'soft_quant': 'soft_sigmoid' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
             }
         }
     elif weight_bitwidth == 2:
@@ -265,13 +265,13 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
                 'bitwidth': weight_bitwidth,
                 'qscheme': torch.per_channel_symmetric,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
+                'soft_quant': 'soft_tanh' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
             },
             'activation': {
                 'bitwidth': activation_bitwidth,
                 'qscheme': activation_qscheme,
                 'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'soft_sigmoid' 'soft_tanh' 'default'
+                'soft_quant': 'soft_tanh' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
             }
         }
     else:
