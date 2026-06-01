@@ -33,12 +33,10 @@
 import torch
 from torch.ao.quantization import QConfig, QConfigMapping
 import torch.ao.quantization
-from logging import getLogger
 
 from . import observer_types
 from . import fake_quant_types
 from . import auto_quantization
-logger = getLogger("root.main.qconfig_types")
 
 
 def _get_fake_quant_from_name(fake_quant_name):
