@@ -403,13 +403,13 @@ def try_downgrade_32bit_layers(
             passes = metric <= threshold
         if passes:
             logger.info(
-                f"  {layer_name}: downgraded 32→8 bit "
+                f"  {layer_name}: downgraded from 32 to 8 bit "
                 f"(metric={metric:.4f} passes threshold={threshold:.4f})"
             )
             current = trial
         else:
             logger.info(
-                f"  {layer_name}: kept at 32-bit "
+                f"  {layer_name}: kept at 32 bit "
                 f"(metric={metric:.4f} fails threshold={threshold:.4f})"
             )
     return current
