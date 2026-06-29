@@ -379,6 +379,8 @@ class AddReLUBlock(torch.nn.Module):
         if self.with_relu:
             out = self.relu(out)
             out = self.clip(out)
+        else:
+            out = self.oss(out)
         return out
 
 class DQAddReLUBlock(torch.nn.Module):

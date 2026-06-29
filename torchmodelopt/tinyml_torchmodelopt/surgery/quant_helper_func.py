@@ -297,7 +297,7 @@ def replace_call_function_or_method(main_module: GraphModule, start: torch.Node,
             # Remove the original start node
             main_module.graph.erase_node(start)
             lint_and_recompile(main_module)
-            return
+            return new_node
 
     # Get the name of replaced module
     new_node_name = get_name_from_module(replace_module, module_no)
@@ -529,7 +529,7 @@ def assign_same_observers_for_residual_inputs(model: GraphModule):
     Args:
         model: GraphModule to modify
     """
-    residual_operators = {operator.add, torch.add, "add", torch.cat, torch.stack}
+    residual_operators = {operator.add, torch.add, "add"}
     for node in model.graph.nodes:
         target_name = node.target
         if target_name in residual_operators:
