@@ -227,6 +227,8 @@ class TINPUQuantizedReplacementUtils():
         first_quant_nodes = self._find_first_quant_node()
 
         for first_quant_node in first_quant_nodes:
+            if not first_quant_node.users:
+                continue
             user = list(first_quant_node.users)[0]
             named_modules = self._get_named_modules()
 
