@@ -10,7 +10,7 @@ import random
 
 # ti, onnx imports
 from tinyml_torchmodelopt.quantization import \
-    TINPUTinyMLQATFxModule, TINPUTinyMLPTQFxModule, GenericTinyMLQATFxModule, GenericTinyMLPTQFxModule
+    TINPUTinyMLQATFxModule, TINPUTinyMLPTQFxModule, GenericTinyMLQATFxModule, GenericTinyMLPTQFxModule, TinyMLQConfigType
 
 import onnx
 import onnxruntime as ort
@@ -226,69 +226,8 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     The api being called doesn't actually pass qconfig_type - so it will be defined inside. 
     But if you need to pass, it can be defined.
     '''
-    if weight_bitwidth is None or activation_bitwidth is None:
-        '''
-        # 8bit weight / activation is default - no need to specify inside.
-        qconfig_type = {
-            'weight': {
-                'bitwidth': 8,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-            },
-            'activation': {
-                'bitwidth': 8,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-            }
-        }
-        '''
-        qconfig_type = None
-    elif weight_bitwidth == 8:
-        qconfig_type = {
-            'weight': {
-                'bitwidth': weight_bitwidth,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu
-            },
-            'activation': {
-                'bitwidth': activation_bitwidth,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu
-            }
-        }
-    elif weight_bitwidth == 4:
-        qconfig_type = {
-            'weight': {
-                'bitwidth': weight_bitwidth,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-                'soft_quant': 'default' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
-            },
-            'activation': {
-                'bitwidth': activation_bitwidth,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_sigmoid' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
-            }
-        }
-    elif weight_bitwidth == 2:
-        qconfig_type = {
-            'weight': {
-                'bitwidth': weight_bitwidth,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-                'soft_quant': 'dbq' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
-            },
-            'activation': {
-                'bitwidth': activation_bitwidth,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-                'soft_quant': 'soft_tanh' # 'dbq' 'soft_sigmoid' 'soft_tanh' 'default'
-            }
-        }
-    else:
-        raise RuntimeError("unsupported quantization parameters")
-    #
+    qconfig_type = TinyMLQConfigType(weight_bitwidth=8, activation_bitwidth=8, auto_quantization=False).qconfig_type
+
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
             quant_model = TINPUTinyMLQATFxModule(nn_model, qconfig_type=qconfig_type, example_inputs=example_input, total_epochs=total_epochs)

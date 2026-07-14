@@ -348,7 +348,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         """Apply DBQ quantization logic to weights being quantized by DBQFakeQuantize modules.
 
         For each DBQFakeQuantize module, finds the parent module whose weight it quantizes
-        and applies DBQ thresholding before convert_fx, preserving DBQ semantics.
+        and applies DBQ thresholds before convert_fx, preserving DBQ semantics.
         """
         for name, dbq_module in model.named_modules():
             if isinstance(dbq_module, fake_quant_types.DBQFakeQuantize):
