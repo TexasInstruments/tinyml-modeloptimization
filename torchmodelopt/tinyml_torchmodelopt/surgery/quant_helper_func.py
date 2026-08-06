@@ -141,7 +141,9 @@ def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, round
     mask = torch.isnan(scaled_weights)
     scaled_weights[mask], shift[mask] = 0, 1
 
-    if torch.any(scaled_weights > scale_max):
+    # Skip this eager validation during torch.export/dynamo tracing — the check
+    # is data-dependent and cannot be represented in a static graph.
+    if not torch.compiler.is_compiling() and torch.any(scaled_weights > scale_max):
         raise RuntimeError(
             f"Error in quantization.convert :: compute_offset_scale_shift. Scaling could not be converted.\n"
             f"Invalid scale values: {weight.cpu().detach().numpy()}\n"

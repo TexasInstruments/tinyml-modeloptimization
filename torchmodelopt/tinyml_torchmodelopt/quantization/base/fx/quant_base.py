@@ -658,7 +658,6 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
 
         qdq_filename = os.path.splitext(filename)[0] + '_qdq.onnx'
 
-        # Export with QDQ nodes
         torch.onnx.export(model, example_inputs.to(device=device), qdq_filename,
                         opset_version=opset_version, **export_kwargs)
 
