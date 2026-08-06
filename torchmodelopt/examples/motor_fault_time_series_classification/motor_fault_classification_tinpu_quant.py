@@ -226,7 +226,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     The api being called doesn't actually pass qconfig_type - so it will be defined inside. 
     But if you need to pass, it can be defined.
     '''
-    qconfig_type = TinyMLQConfigType(weight_bitwidth=8, activation_bitwidth=8, auto_quantization=False).qconfig_type
+    qconfig_type = TinyMLQConfigType(weight_bitwidth=weight_bitwidth, activation_bitwidth=activation_bitwidth, auto_quantization=False).qconfig_type
 
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
@@ -437,7 +437,9 @@ if __name__ == '__main__':
     torchinfo.summary(nn_model, input_data=example_input.to(DEVICE))
 
     nn_model = train_model(nn_model, train_loader, NUM_EPOCHS, LEARNING_RATE)
+    accuracies = {"float": None, "qat": None, "exported": None}
     accuracy = validate_model(nn_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
+    accuracies['float'] = accuracy
     export_model(nn_model, example_input, MODEL_NAME)
     print(f"Trained Model Accuracy: {round(accuracy, 5)}\n")
 
@@ -456,6 +458,7 @@ if __name__ == '__main__':
         #
 
         accuracy = validate_model(quant_model, test_loader, NUM_CATEGORIES, CATEGORIES_NAME)
+        accuracies['qat'] = accuracy
         print(f"{QUANTIZATION_METHOD} Model Accuracy: {round(accuracy, 5)}\n")
 
         quant_model = export_model(quant_model, example_input, MODEL_NAME, with_quant=True)
@@ -463,4 +466,7 @@ if __name__ == '__main__':
         print("No Quantization method is specified. Will not do quantization.")
 
     accuracy = validate_saved_model(MODEL_NAME, test_loader)
+    accuracies['exported'] = accuracy
     print(f"Exported ONNX Quant Model Accuracy: {round(accuracy, 5)}")
+    print(accuracies)
+
