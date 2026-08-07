@@ -212,6 +212,9 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         modules are checked - container modules are allowed to propagate quantization to
         their children.
 
+        For ConvTranspose modules, applies ch_axis=1 since their weight layout differs from
+        standard Conv modules (output channels are in dimension 1 instead of 0).
+
         Args:
             qconfig_mapping: QConfigMapping instance to be configured
             model: Model to iterate over
@@ -222,6 +225,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         supported_types = (
             torch.nn.Identity, torch.nn.Dropout,
             torch.nn.Conv1d, torch.nn.Conv2d, torch.nn.Conv3d,
+            torch.nn.ConvTranspose1d, torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d,
             torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d,
             torch.nn.Linear,
             torch.nn.MaxPool1d, torch.nn.MaxPool2d, torch.nn.MaxPool3d,
@@ -229,6 +233,13 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             torch.nn.AdaptiveAvgPool1d, torch.nn.AdaptiveAvgPool2d, torch.nn.AdaptiveAvgPool3d,
             torch.nn.AdaptiveMaxPool1d, torch.nn.AdaptiveMaxPool2d, torch.nn.AdaptiveMaxPool3d,
         )
+
+        convtranspose_types = (
+            torch.nn.ConvTranspose1d, torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d,
+        )
+
+        # Get the global qconfig
+        global_qconfig = qconfig_mapping.global_qconfig
 
         # Recursively check modules and set unsupported leaf modules to None
         for name, module in model.named_modules():
@@ -242,7 +253,38 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             # Set qconfig to None for unsupported leaf modules
             if not isinstance(module, supported_types):
                 qconfig_mapping.set_module_name(name, None)
+            # For ConvTranspose modules, apply qconfig with ch_axis=1
+            elif isinstance(module, convtranspose_types) and global_qconfig is not None:
+                qconfig_with_ch_axis_1 = self._get_qconfig_with_ch_axis(global_qconfig, ch_axis=1)
+                qconfig_mapping.set_module_name(name, qconfig_with_ch_axis_1)
+
         return qconfig_mapping
+
+    def _get_qconfig_with_ch_axis(self, qconfig, ch_axis):
+        """Create a new QConfig with modified ch_axis for weight observer.
+
+        Args:
+            qconfig: Original QConfig
+            ch_axis: Channel axis value to set
+
+        Returns:
+            New QConfig with weight observer modified to use the specified ch_axis
+        """
+        from torch.ao.quantization import QConfig
+
+        if qconfig is None:
+            return None
+
+        # Extract weight and activation fake quantize objects
+        weight_fake_quant = qconfig.weight
+        activation_fake_quant = qconfig.activation
+
+        # Create new weight fake quantize with ch_axis parameter
+        if weight_fake_quant is not None:
+            weight_fake_quant = weight_fake_quant.with_args(ch_axis=ch_axis)
+
+        # Create new QConfig with modified weight fake quantize
+        return QConfig(weight=weight_fake_quant, activation=activation_fake_quant)
 
     def _has_batch_norm_after_observer(self, observer_node):
         """Check if batch norm exists in the data flow after observer node.

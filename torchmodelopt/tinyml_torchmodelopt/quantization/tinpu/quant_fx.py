@@ -172,6 +172,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         replacement_rules = [
             ([torch.nn.BatchNorm2d, torch.quantize_per_tensor], replacement_utils.from_bnq),
             ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d], replacement_utils.from_conv_bn_relu),
+            ([torch.ao.nn.quantized.modules.conv.ConvTranspose2d, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_t_conv_bn_relu),
             ([torch.ao.nn.intrinsic.modules.fused.ConvBn2d], replacement_utils.from_conv_bn),
             ([torch.ao.nn.intrinsic.modules.fused.LinearReLU], replacement_utils.from_linear_relu),
             ([torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_qbn),

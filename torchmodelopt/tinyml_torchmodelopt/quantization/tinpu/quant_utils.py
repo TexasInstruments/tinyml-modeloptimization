@@ -141,10 +141,6 @@ class TINPUQuantizedReplacementUtils():
                     args = node.args
                     scale = getattr(self.module, args[1].target)
                     zero_point = getattr(self.module, args[2].target)
-                    named_modules = self._get_named_modules()
-                    if node.args[0].target in named_modules and isinstance(named_modules[node.args[0].target], torch.nn.Flatten):
-                        args = node.args[0].args[0].args[0]
-                        scale, zero_point = self.get_q_params(args, using='prev')
                 elif node.name.startswith(('add')):
                     args = node.args
                     scale = getattr(self.module, args[2].target)
@@ -325,6 +321,50 @@ class TINPUQuantizedReplacementUtils():
         self.from_q_qbn(start, start)
         return None
     
+    def from_t_conv_bn_relu(self, start: Node, end: Node, with_relu: bool=True):
+        qconvrelu_module = self._get_named_modules()[start.target]
+        conv_module = torch.nn.ConvTranspose2d(qconvrelu_module.in_channels, qconvrelu_module.out_channels,
+                                       kernel_size=qconvrelu_module.kernel_size, stride=qconvrelu_module.stride, 
+                                       padding=qconvrelu_module.padding, output_padding=qconvrelu_module.output_padding, dilation=qconvrelu_module.dilation, 
+                                       groups=qconvrelu_module.groups, bias=False)
+        
+        weight = qconvrelu_module.weight()
+        per_channel = (weight.qscheme() in (torch.per_channel_symmetric, torch.per_channel_affine))
+
+        qweight = weight.data.detach().int_repr()
+        conv_module.weight.data.copy_(qweight)
+
+        weight_scale = weight.q_per_channel_scales() if per_channel else weight.q_scale()
+        weight_zero_point = weight.q_per_channel_zero_points() if per_channel else weight.q_zero_point()
+        
+        input_scale, input_zero_point = self.get_q_params(start, using='prev')
+
+        acc_scale = weight_scale * input_scale
+        bias_scale = acc_scale
+        bias_zero_point = weight_zero_point
+        bias = qconvrelu_module.bias()
+
+        round_offset = qconvrelu_module.scale / 2 / acc_scale.float().detach()
+
+        if per_channel:
+            qbias = torch.quantize_per_channel(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+        else:
+            qbias = torch.quantize_per_tensor(bias, bias_scale, bias_zero_point, 0, torch.qint32)
+        qbias = qbias.int_repr()
+
+        # conv_module.bias.data.copy_(qbias)
+        relative_mult = (acc_scale / qconvrelu_module.scale).float()
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult, round_offset, num_bits_scale=self.num_bits_scale)
+        
+        if with_relu:
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.activation_bw + 1, 2**self.activation_bw - 1)
+            seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 2**self.activation_bw - 1))
+        else:
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.activation_bw + 1, 2**self.activation_bw - 1)
+            seq_module = torch.nn.Sequential(conv_module, oss_module)
+        replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
+        return None
+
     # Replacement Rules for quantized Convolution and Linear Layers
     def from_qconv_relu(self, start: Node, end: Node, with_relu: bool=True):
         qconvrelu_module = self._get_named_modules()[start.target]
