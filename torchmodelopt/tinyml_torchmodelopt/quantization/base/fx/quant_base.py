@@ -658,8 +658,11 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
 
         qdq_filename = os.path.splitext(filename)[0] + '_qdq.onnx'
 
+        # INT_MODEL uses legacy quantized ops (Conv2dPackedParamsBase etc.) that
+        # lack __obj_flatten__ and cannot be traced by torch.export. Use the
+        # legacy JIT-based exporter.
         torch.onnx.export(model, example_inputs.to(device=device), qdq_filename,
-                        opset_version=opset_version, **export_kwargs)
+                        opset_version=opset_version, dynamo=False, **export_kwargs)
 
         # Use ONNX Runtime to optimize and convert to INT format
         session_options = ort.SessionOptions()
