@@ -635,7 +635,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
                                  preserve_qdq_model, device, export_kwargs)
         else:
             torch.onnx.export(model, example_inputs.to(device=device), filename,
-                            opset_version=opset_version, **export_kwargs)
+                            opset_version=opset_version, verbose=False, **export_kwargs)
 
         # Optionally simplify the exported model
         if simplify:
@@ -662,7 +662,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         # lack __obj_flatten__ and cannot be traced by torch.export. Use the
         # legacy JIT-based exporter.
         torch.onnx.export(model, example_inputs.to(device=device), qdq_filename,
-                        opset_version=opset_version, dynamo=False, **export_kwargs)
+                        opset_version=opset_version, dynamo=False, verbose=False, **export_kwargs)
 
         # Use ONNX Runtime to optimize and convert to INT format
         session_options = ort.SessionOptions()
