@@ -163,6 +163,19 @@ def compute_offset_scale_shift(offset: torch.Tensor, weight: torch.Tensor, round
     offset = offset + shift_round_offset
     if int_bias:
         offset = torch.round(offset)
+
+    # Clip offset to valid range based on num_bits_scale
+    if num_bits_scale == 1:
+        # 24-bit signed integer range: [-(2^23), 2^23 - 1]
+        offset_max = 2**23 - 1
+        offset_min = -(2**23)
+        offset = offset.clamp(offset_min, offset_max)
+    elif num_bits_scale == 8:
+        # 16-bit signed integer range: [-(2^15), 2^15 - 1]
+        offset_max = 2**15 - 1
+        offset_min = -(2**15)
+        offset = offset.clamp(offset_min, offset_max)
+
     return offset, scaled_signed_weights, shift_mult
 
 def _get_parent_name(target: str):
