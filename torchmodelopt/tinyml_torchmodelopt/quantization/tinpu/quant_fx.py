@@ -38,7 +38,7 @@ from ..base.fx import TinyMLQuantFxBaseModule
 from torch.fx import GraphModule
 from typing import List, Tuple, Optional
 
-from ...surgery.quant_helper_func import remove_identity, assign_same_observers_for_residual_inputs
+from ...surgery.quant_helper_func import remove_identity, assign_same_observers_for_residual_inputs, assign_same_observers_for_flatten
 from .quant_utils import TINPUQuantizedReplacementUtils
 
 
@@ -61,6 +61,7 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         self.output_int = output_int
         super().__init__(*args, qconfig_type=qconfig_type, **kwargs)
         assign_same_observers_for_residual_inputs(self.module)
+        assign_same_observers_for_flatten(self.module)
 
     def convert(self, *args, **kwargs):
         '''
@@ -101,7 +102,8 @@ class TINPUTinyMLQuantFxModule(TinyMLQuantFxBaseModule):
         replacement_rules = [
             ([torch.nn.BatchNorm2d, torch.quantize_per_tensor], replacement_utils.from_bnq),
             ([torch.ao.nn.intrinsic.modules.fused.ConvReLU2d], replacement_utils.from_conv_bn_relu),
-            ([torch.ao.nn.quantized.modules.conv.ConvTranspose2d, torch.ao.nn.quantized.modules.batchnorm.BatchNorm2d], replacement_utils.from_t_conv_bn_relu),
+            (['dequantize', torch.nn.ConvTranspose2d, torch.nn.ReLU], replacement_utils.from_dq_t_conv_bn_relu),
+            ([torch.nn.ConvTranspose2d, torch.nn.ReLU], replacement_utils.from_t_conv_bn_relu),
             ([torch.ao.nn.quantized.modules.conv.ConvTranspose2d], replacement_utils.from_t_conv),
             ([torch.ao.nn.intrinsic.modules.fused.ConvBn2d], replacement_utils.from_conv_bn),
             ([torch.ao.nn.intrinsic.modules.fused.LinearReLU], replacement_utils.from_linear_relu),

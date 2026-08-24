@@ -13,7 +13,8 @@
 #   and/or other materials provided with the distribution.
 #
 # * Neither the name of the copyright holder nor the names of its
-#   contributors may be used to endorse or promote products derived from
+#   contributors may be used to endorse or promote pr
+# oducts derived from
 #   this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
@@ -214,6 +215,224 @@ def remove_input_observer_before_bn(model):
     model.recompile()
 
 
+def _make_convtranspose_forward_with_fq(orig_forward):
+    """Create a forward function that calls weight_fake_quant before conv_transpose.
+
+    This wrapper ensures weight quantization is applied during QAT training.
+    """
+    def forward_with_fq(self, input, output_size=None):
+        weight = self.weight_fake_quant(self.weight) if hasattr(self, 'weight_fake_quant') else self.weight
+        import torch.nn.functional as F
+        if self.padding_mode != 'zeros':
+            raise ValueError(f"Only 'zeros' padding mode supported, got '{self.padding_mode}'")
+        output_padding = self._output_padding(
+            input, output_size, self.stride, self.padding, self.kernel_size, self.dilation
+        )
+        return F.conv_transpose2d(
+            input, weight, self.bias,
+            self.stride, self.padding, output_padding, self.groups, self.dilation
+        )
+    return forward_with_fq
+
+
+def remove_activation_observer_after_convtranspose(model):
+    """Remove activation observers that are directly followed by ReLU after ConvTranspose2d.
+
+    This removes activation_post_process nodes only when they're between ConvTranspose2d
+    and ReLU. Observers without ReLU after them are preserved.
+
+    Pattern to remove: ConvTranspose2d → activation_post_process → ReLU
+    Pattern to keep:   ConvTranspose2d → activation_post_process (no ReLU after)
+
+    Args:
+        model: The prepared GraphModule
+    """
+    if not hasattr(model, 'graph'):
+        return
+
+    named_modules = dict(model.named_modules())
+    nodes_to_remove = []
+
+    def is_convtranspose(node):
+        """Check if node is a ConvTranspose module."""
+        if node.op != 'call_module':
+            return False
+        module = named_modules.get(node.target)
+        return isinstance(module, (torch.nn.ConvTranspose1d, torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d))
+
+    def is_identity(node):
+        """Check if node is Identity."""
+        if node.op != 'call_module':
+            return False
+        module = named_modules.get(node.target)
+        return isinstance(module, torch.nn.Identity)
+
+    def is_relu(node):
+        """Check if node is ReLU."""
+        if node.op != 'call_module':
+            return False
+        module = named_modules.get(node.target)
+        return isinstance(module, torch.nn.ReLU)
+
+    def trace_back_to_convtranspose(node, max_depth=5):
+        """Check if this node comes from ConvTranspose2d."""
+        if max_depth <= 0:
+            return False
+
+        if is_convtranspose(node):
+            return True
+
+        if len(node.args) > 0 and isinstance(node.args[0], torch.fx.Node):
+            input_node = node.args[0]
+            # Continue tracing through Identity and other modules
+            if is_identity(input_node) or (input_node.op == 'call_module'):
+                module = named_modules.get(input_node.target)
+                # Skip BatchNorm nodes
+                if module and isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+                    return False
+                return trace_back_to_convtranspose(input_node, max_depth - 1)
+
+        return False
+
+    def has_relu_downstream(node, max_depth=10, visited=None):
+        """Check if there's a ReLU node anywhere downstream from this node (before another ConvTranspose)."""
+        if visited is None:
+            visited = set()
+
+        if max_depth <= 0 or id(node) in visited:
+            return False
+
+        visited.add(id(node))
+
+        # Check if this node itself is ReLU
+        if is_relu(node):
+            return True
+
+        # If we hit another ConvTranspose, stop tracing (don't look beyond)
+        if is_convtranspose(node):
+            return False
+
+        # Recursively check all users
+        if node.users:
+            for user in node.users:
+                if has_relu_downstream(user, max_depth - 1, visited):
+                    return True
+
+        return False
+
+    for node in model.graph.nodes:
+        # Find activation_post_process nodes
+        if node.op == 'call_module' and 'activation_post_process' in node.target:
+            if len(node.args) > 0 and isinstance(node.args[0], torch.fx.Node):
+                from_convtranspose = trace_back_to_convtranspose(node.args[0])
+                has_relu_after = has_relu_downstream(node)
+                # Only remove if: comes from ConvTranspose AND has ReLU somewhere downstream
+                if from_convtranspose and has_relu_after:
+                    nodes_to_remove.append(node)
+
+    # Rewire and remove the marked observer nodes
+    for obs_node in nodes_to_remove:
+        # Collect users before removing
+        obs_users = list(obs_node.users.keys())
+        input_node = obs_node.args[0]
+
+        # Rewire: users of observer now use the previous node output directly
+        for user in obs_users:
+            user.replace_input_with(obs_node, input_node)
+
+        # Remove the observer node
+        model.graph.erase_node(obs_node)
+
+        # Remove the corresponding module if it exists
+        if hasattr(model, obs_node.target):
+            delattr(model, obs_node.target)
+
+    # Recompile if we made changes
+    if nodes_to_remove:
+        model.graph.lint()
+        model.recompile()
+
+
+def attach_weight_fake_quant_to_convtranspose(model):
+    """After prepare_qat_fx, attach weight_fake_quant to ConvTranspose modules.
+
+    PyTorch's prepare_qat_fx doesn't recognize ConvTranspose2d/3d as QAT-able modules,
+    so weight_fake_quant is never created. This function:
+    1. Creates and attaches weight_fake_quant using the qconfig
+    2. Patches the forward method to call weight_fake_quant on weights
+
+    Args:
+        model: The prepared GraphModule (after prepare_qat_fx)
+    """
+    for name, module in model.named_modules():
+        # Only process ConvTranspose2d for now (Conv1d/3d handling similar)
+        if not isinstance(module, torch.nn.ConvTranspose2d):
+            continue
+
+        # Skip if weight_fake_quant already exists
+        if hasattr(module, 'weight_fake_quant'):
+            continue
+
+        # Get qconfig (should have been set by apply_quantization_to_supported_layers)
+        if not hasattr(module, 'qconfig') or module.qconfig is None:
+            continue
+
+        qconfig = module.qconfig
+
+        # Create and attach weight_fake_quant
+        if qconfig.weight is not None:
+            weight_fake_quant = qconfig.weight()
+            module.weight_fake_quant = weight_fake_quant
+            # Patch the forward method to call weight_fake_quant
+            module.forward = _make_convtranspose_forward_with_fq(module.forward).__get__(module, type(module))
+
+
+def fold_bn_into_convtranspose_in_model(model):
+    """Fold BatchNorm into ConvTranspose2d in the original model (before prepare).
+
+    Finds ConvTranspose2d → BatchNorm2d patterns and:
+    1. Folds BN parameters into ConvTranspose2d weights/bias
+    2. Removes the BN module (replaces with Identity so indexing doesn't break)
+
+    This prevents prepare_qat_fx from fusing BN+ReLU, allowing the quantization pattern:
+    ConvTranspose2d (weight QDQ) → Identity (removed in FX) → ReLU → activation QDQ
+
+    Args:
+        model: Original model (not yet prepared)
+    """
+    def find_convtranspose_bn_patterns():
+        """Find all ConvTranspose2d → BatchNorm2d patterns."""
+        patterns = []
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Sequential):
+                children = list(module.children())
+                for i in range(len(children) - 1):
+                    if (isinstance(children[i], torch.nn.ConvTranspose2d) and
+                        isinstance(children[i + 1], torch.nn.BatchNorm2d)):
+                        patterns.append((module, i, name))
+        return patterns
+
+    patterns = find_convtranspose_bn_patterns()
+
+    for seq_module, idx, seq_name in patterns:
+        conv = seq_module[idx]
+        bn = seq_module[idx + 1]
+
+        # Fold BN parameters into ConvTranspose2d
+        bn_scale = bn.weight / torch.sqrt(bn.running_var + bn.eps)
+        bn_bias_folded = bn.bias - bn_scale * bn.running_mean
+
+        # Conv weight shape: (in_channels, out_channels, kH, kW)
+        # Reshape scale to (1, out_channels, 1, 1) for broadcasting on dim 1
+        conv.weight.data = conv.weight.data * bn_scale.view(1, -1, 1, 1)
+        if conv.bias is None:
+            conv.bias = torch.nn.Parameter(torch.zeros(conv.out_channels, device=conv.weight.device))
+        conv.bias.data = conv.bias.data * bn_scale + bn_bias_folded
+
+        # Replace BN with Identity (keeps indexing intact for Sequential)
+        seq_module[idx + 1] = torch.nn.Identity()
+
+
 def prepare_quantized_model(model, qconfig_mapping, example_inputs, is_qat):
     """Prepare model for quantization with FX graph mode.
 
@@ -229,16 +448,27 @@ def prepare_quantized_model(model, qconfig_mapping, example_inputs, is_qat):
     Returns:
         Prepared GraphModule ready for quantization
     """
+    # Fold BN into ConvTranspose2d BEFORE prepare to prevent BNReLU fusion
+    if is_qat:
+        fold_bn_into_convtranspose_in_model(model)
+
     # Apply quantization only to supported layers
     qconfig_mapping = apply_quantization_to_supported_layers(qconfig_mapping, model)
 
     # Prepare model for quantization
     if is_qat:
         prepared_model = quantize_fx.prepare_qat_fx(model, qconfig_mapping, example_inputs)
+        # PyTorch doesn't support ConvTranspose QAT natively, so manually attach weight_fake_quant
+        attach_weight_fake_quant_to_convtranspose(prepared_model)
     else:
         prepared_model = quantize_fx.prepare_fx(model, qconfig_mapping, example_inputs)
 
     # Remove input observer to avoid quantization on raw inputs
     remove_input_observer_before_bn(prepared_model)
+
+    # Remove activation observers from ConvTranspose2d AFTER remove_input_observer_before_bn
+    # to ensure graph structure is stable
+    if is_qat:
+        remove_activation_observer_after_convtranspose(prepared_model)
 
     return prepared_model
