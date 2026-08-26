@@ -18,6 +18,8 @@ from typing import Tuple, List
 
 from tinyml_torchmodelopt.quantization import \
     TINPUTinyMLQATFxModule, TINPUTinyMLPTQFxModule, GenericTinyMLQATFxModule, GenericTinyMLPTQFxModule
+
+from tinyml_torchmodelopt.quantization.common import TinyMLQConfigType
 import onnx
 import onnxruntime as ort
 # other imports
@@ -787,76 +789,10 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     '''
     is_qat = (quantization_method == 'QAT')
 
-    if weight_bitwidth is None or activation_bitwidth is None:
-        '''
-        # 8bit weight / activation is default - no need to specify inside.
-        qconfig_type = {
-            'weight': {
-                'bitwidth': 8,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-            },
-            'activation': {
-                'bitwidth': 8,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-            }
-        }
-        '''
-        qconfig_type = None
-    elif weight_bitwidth == 8:
-        qconfig_type = {
-            'weight': {
-                'bitwidth': weight_bitwidth,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-            },
-            'activation': {
-                'bitwidth': activation_bitwidth,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-            }
-        }
-    elif weight_bitwidth == 4:
-        mixed_precision = None if is_qat else \
-                    { 8: ['pointwise2', 'bn22', 'relu22', 'pointwise3', 'bn32', 'relu32', 
-                          'depthwise2', 'bn21', 'relu21', 'depthwise3', 'bn31', 'relu31']}
-        qconfig_type = {
-            'weight': {
-                'bitwidth': weight_bitwidth,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-                'mixed_precision': mixed_precision,
-                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
-            },
-            'activation': {
-                'bitwidth': activation_bitwidth,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-                'histogram_range': 1,
-                'soft_quant': 'default' # 'default' 'soft_tanh'
-            },
-        }
-    elif weight_bitwidth == 2:
-        qconfig_type = {
-            'weight': {
-                'bitwidth': weight_bitwidth,
-                'qscheme': torch.per_channel_symmetric,
-                'power2_scale': is_ti_npu,
-                'quant_min': -1,
-                'quant_max': 1,
-                'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
-            },
-            'activation': {
-                'bitwidth': activation_bitwidth,
-                'qscheme': activation_qscheme,
-                'power2_scale': is_ti_npu,
-                'histogram_range': 1,
-                'soft_quant': 'default' # 'default' 'soft_tanh'
-            }
-        }
-    else:
-        raise RuntimeError("unsupported quantization parameters")
+    mixed_precision = None if is_qat else \
+            { 8: ['pointwise2', 'bn22', 'relu22', 'pointwise3', 'bn32', 'relu32', 
+                    'depthwise2', 'bn21', 'relu21', 'depthwise3', 'bn31', 'relu31']}
+    qconfig_type = TinyMLQConfigType(weight_bitwidth=weight_bitwidth, activation_bitwidth=activation_bitwidth, auto_quantization=False, mixed_precision=mixed_precision)
  
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
@@ -928,9 +864,9 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
     #  Export to ONNX
     if hasattr(quant_model, "export"):
         print(" Exporting to ONNX...")
-        quant_model.export(example_input, model_name, input_names=['input'])
+        quant_model.export(example_input.to(DEVICE), model_name, input_names=['input'])
     else:
-        torch.onnx.export(quant_model, example_input, model_name, input_names=['input'])
+        torch.onnx.export(quant_model, example_input.to(DEVICE), model_name, input_names=['input'])
 
     print("Model exported successfully")
     return quant_model
