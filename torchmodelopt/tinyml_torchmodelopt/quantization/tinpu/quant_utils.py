@@ -507,18 +507,13 @@ class TINPUQuantizedReplacementUtils():
         # conv_module.bias.data.copy_(qbias)
         relative_mult = (acc_scale / qconvrelu_module.scale).float()
         oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(qbias, relative_mult, round_offset, num_bits_scale=num_bits_scale)
-
-        quant_min = -(2**(self.activation_bw - 1))
-        quant_max = 2**(self.activation_bw - 1) - 1
-        if qconvrelu_module.zero_point == 0:
-            quant_min = 0
-            quant_max = 2**self.activation_bw - 1
         
         if with_relu:
             oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.activation_bw + 1, 2**self.activation_bw - 1)
             seq_module = torch.nn.Sequential(conv_module, oss_module, torch.nn.ReLU(), torch.nn.Hardtanh(0, 2**self.activation_bw - 1))
         else:
-            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, quant_min, quant_max)
+            # for Residual Networks the activations are clipped as -255, 255
+            oss_module = TINPUOffsetScaleShift(oss_offset, oss_scale, oss_shift, -2**self.activation_bw + 1, 2**self.activation_bw - 1)
             seq_module = torch.nn.Sequential(conv_module, oss_module)
         replace_call_module(self.module, start, end, seq_module, self._get_module_num(), self.rename_nodes_flag)
         return None
