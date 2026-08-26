@@ -77,7 +77,7 @@ class TinyMLQConfigType:
                  inputs=None, targets=None, criterion=None,
                  calibration_dataloader=None, eval_dataloader=None,
                  task_type: str=None, float_metric: float=None, example_inputs=None,
-                 **kwargs):
+                 mixed_precision=None, **kwargs):
         self.logger = getLogger("root.main.TinyMLQConfigType")
         if auto_quantization:
             self.logger.info("Quantization Bitwidths: Auto quantization")
@@ -111,6 +111,7 @@ class TinyMLQConfigType:
                     'bitwidth': weight_bitwidth,
                     'qscheme': torch.per_channel_symmetric,
                     'power2_scale': True,
+                    'mixed_precision': mixed_precision,
                     'range_max': None,
                     'fixed_range': False
                 },
@@ -129,6 +130,7 @@ class TinyMLQConfigType:
                     'bitwidth': weight_bitwidth,
                     'qscheme': torch.per_channel_symmetric,
                     'power2_scale': False,
+                    'mixed_precision': mixed_precision,
                     'range_max': None,
                     'fixed_range': False,
                     'soft_quant': 'soft_sigmoid' # 'soft_sigmoid' 'soft_tanh' 'default'
@@ -149,6 +151,7 @@ class TinyMLQConfigType:
                     'bitwidth': weight_bitwidth,
                     'qscheme': torch.per_channel_symmetric,
                     'power2_scale': False,
+                    'mixed_precision': mixed_precision,
                     'range_max': None,
                     'fixed_range': False,
                     'soft_quant': 'dbq' # 'soft_sigmoid' 'soft_tanh' 'default'
