@@ -792,7 +792,7 @@ def get_quant_model(nn_model: nn.Module, example_input: torch.Tensor, total_epoc
     mixed_precision = None if is_qat else \
             { 8: ['pointwise2', 'bn22', 'relu22', 'pointwise3', 'bn32', 'relu32', 
                     'depthwise2', 'bn21', 'relu21', 'depthwise3', 'bn31', 'relu31']}
-    qconfig_type = TinyMLQConfigType(weight_bitwidth=weight_bitwidth, activation_bitwidth=activation_bitwidth, auto_quantization=False, mixed_precision=mixed_precision)
+    qconfig_type = TinyMLQConfigType(weight_bitwidth=weight_bitwidth, activation_bitwidth=activation_bitwidth, auto_quantization=False, weight_mixed_precision=mixed_precision)
  
     if quantization_device_type == 'TINPU':
         if quantization_method == 'QAT':
@@ -862,7 +862,7 @@ def export_model(quant_model, example_input: torch.Tensor, model_name: str, with
             quant_model = quantize_fx.convert_fx(quant_model.module)
    
     #  Export to ONNX
-    if hasattr(quant_model, "export"):
+    if with_quant and hasattr(quant_model, "export"):
         print(" Exporting to ONNX...")
         quant_model.export(example_input.to(DEVICE), model_name, input_names=['input'])
     else:

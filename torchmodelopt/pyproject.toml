@@ -14,7 +14,7 @@ dependencies = [
 	# "onnx==1.19.1",
 	# "onnxruntime==1.23.2",
 	# "colorama==0.4.6",
-	# "torch==2.7.1",
+	# "torch==2.11.0",
 ]
 [[project.authors]]
 name = "Adithya Thonse"
