@@ -223,7 +223,7 @@ class TINPUQuantizedReplacementUtils():
         scale = getattr(self.module, q_node.args[1].target)
         zero_point = getattr(self.module, q_node.args[2].target)
         # OSS Module
-        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, int_bias=False, num_bits_scale=8)
+        oss_offset, oss_scale, oss_shift = compute_offset_scale_shift(zero_point*0.0, 1/scale, int_bias=False, num_bits_scale=12)
         quant_min = -(2**(self.activation_bw - 1))
         quant_max = 2**(self.activation_bw - 1) - 1
         if zero_point == 0:

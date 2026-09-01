@@ -283,7 +283,7 @@ def remove_intermediate_call_modules(main_module: GraphModule, new_node: Node, s
     ptr.replace_all_uses_with(new_node)
     main_module.graph.erase_node(end)
 
-def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int = 0) -> None:
+def replace_call_function_or_method(main_module: GraphModule, start: torch.Node, end: torch.Node, replace_module: torch.nn.Module, module_no: int = 0) -> torch.Node:
     """Replace nodes between start and end with a replacement module.
     
     Removes intermediate nodes and inserts the replacement module.
