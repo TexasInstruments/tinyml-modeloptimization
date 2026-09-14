@@ -86,6 +86,8 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
             raise ValueError("total_epochs must be a positive number, got: {}".format(total_epochs))
         if model and not isinstance(model, torch.nn.Module):
             raise TypeError("model must be a torch.nn.Module instance, got: {}".format(type(model)))
+        if qconfig_type and not isinstance(qconfig_type, TinyMLQConfigType):
+            raise TypeError("Qconfig Type must be an instance of TinyMLQConfigType")
         
         # fbgemm is optimal for x86; qnnpack for ARM (Apple Silicon, mobile)
         # Intel Mac (Darwin + x86_64) also benefits from fbgemm
@@ -96,7 +98,7 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         self.original_module = model
         self.module = model
         self.is_qat = is_qat
-        self.qconfig_type = qconfig_type.qconfig_type
+        self.qconfig_type = qconfig_type
         self.model_output_format = model_output_format
         self.example_inputs = example_inputs
 
@@ -143,16 +145,16 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         """Prepare and apply quantization configuration to the model.
 
         Args:
-            qconfig_type: Quantization configuration type dictionary from TinyMLQConfigType
+            qconfig_type: Quantization configuration type TinyMLQConfigType
             model: Input model
             example_inputs: Example inputs for model tracing
             is_qat: Whether to use QAT (True) or PTQ (False) preparation
         """
         # Build QConfigMapping from various input formats
-        if isinstance(qconfig_type, dict) or qconfig_type is None:
-            qconfig_mapping = qconfig_types.get_default_qconfig_mapping(model, qconfig_type)
+        if isinstance(qconfig_type, TinyMLQConfigType):
+            qconfig_mapping = qconfig_types.get_default_qconfig_mapping(model, qconfig_type.qconfig_type)
         else:
-            raise TypeError("qconfig_type must be dict. Got {}".format(type(qconfig_type)))
+            raise TypeError("Qconfig Type must be an instance of TinyMLQConfigType")
 
         # Prepare model with quantization applied to supported layers
         self.module = quantize_model.prepare_quantized_model(
