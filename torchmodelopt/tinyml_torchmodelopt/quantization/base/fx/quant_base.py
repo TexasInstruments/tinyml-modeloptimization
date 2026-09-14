@@ -89,10 +89,11 @@ class TinyMLQuantFxBaseModule(torch.nn.Module):
         if qconfig_type and not isinstance(qconfig_type, TinyMLQConfigType):
             raise TypeError("Qconfig Type must be an instance of TinyMLQConfigType")
         
-        # fbgemm is optimal for x86; qnnpack for ARM (Apple Silicon, mobile)
-        # Intel Mac (Darwin + x86_64) also benefits from fbgemm
+        # oneDNN is optimal for x86 (fbgemm was merged into oneDNN in recent
+        # PyTorch builds and is no longer a registered quantized engine);
+        # qnnpack for ARM (Apple Silicon, mobile).
         _is_x86 = platform.machine() in ('x86_64', 'AMD64', 'x86')
-        backend = 'fbgemm' if (platform.system() == 'Windows' or (platform.system() == 'Darwin' and _is_x86)) else 'qnnpack'
+        backend = 'onednn' if (platform.system() == 'Windows' or (platform.system() == 'Darwin' and _is_x86)) else 'qnnpack'
 
         # Core model and configuration parameters
         self.original_module = model
