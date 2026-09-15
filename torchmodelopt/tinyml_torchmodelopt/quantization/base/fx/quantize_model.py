@@ -455,13 +455,27 @@ def prepare_quantized_model(model, qconfig_mapping, example_inputs, is_qat):
     # Apply quantization only to supported layers
     qconfig_mapping = apply_quantization_to_supported_layers(qconfig_mapping, model)
 
+    # Treat the model input as already in the quantized domain (scale=1, zero_point=0), so
+    # no observer/quantize node is inserted on the raw sensor input. The first layer's weight
+    # and output activation are still quantized normally via its own qconfig.
+    prepare_custom_config = {}
+
+    try:
+        target_module = model.model._modules['0']
+        if type(target_module).__name__ == 'FilterBank':
+            prepare_custom_config = {"input_quantized_idxs": [0]}
+    except (AttributeError, KeyError):
+        pass
+
     # Prepare model for quantization
     if is_qat:
-        prepared_model = quantize_fx.prepare_qat_fx(model, qconfig_mapping, example_inputs)
+        prepared_model = quantize_fx.prepare_qat_fx(model, qconfig_mapping, example_inputs,
+                                                     prepare_custom_config=prepare_custom_config)
         # PyTorch doesn't support ConvTranspose QAT natively, so manually attach weight_fake_quant
         attach_weight_fake_quant_to_convtranspose(prepared_model)
     else:
-        prepared_model = quantize_fx.prepare_fx(model, qconfig_mapping, example_inputs)
+        prepared_model = quantize_fx.prepare_fx(model, qconfig_mapping, example_inputs,
+                                                 prepare_custom_config=prepare_custom_config)
 
     # Remove input observer to avoid quantization on raw inputs
     remove_input_observer_before_bn(prepared_model)
