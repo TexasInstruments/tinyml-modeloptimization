@@ -18,7 +18,8 @@ dependencies = [
 	"onnx==1.22.0",
 	"onnxruntime==1.23.2 ; python_version < '3.11'",
 	"onnxruntime==1.29.0 ; python_version >= '3.11'",
-	"onnxsim==0.7.3",
+	# using onnxsim==0.4.36 is recommended, the later versions fold the Mul block of Add, Mul, Mul
+	"onnxsim==0.4.36",
 	"colorama==0.4.6",
 	"torch==2.11.0",
 ]
