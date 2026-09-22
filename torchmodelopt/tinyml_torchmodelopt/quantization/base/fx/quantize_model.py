@@ -432,6 +432,23 @@ def fold_bn_into_convtranspose_in_model(model):
         # Replace BN with Identity (keeps indexing intact for Sequential)
         seq_module[idx + 1] = torch.nn.Identity()
 
+def get_prepare_custom_config(model):
+    """Create prepare_custom_config for models with pre-quantized inputs.
+
+    Treats the model input as already in the quantized domain (scale=1, zero_point=0), so
+    no observer/quantize node is inserted on the raw sensor input. The first layer's weight
+    and output activation are still quantized normally via its own qconfig.
+
+    """
+    prepare_custom_config = {}
+    FilterBank_layer_names = ['model.0']
+
+    for name, module in model.named_modules():
+        if name in FilterBank_layer_names and type(module).__name__ == 'FilterBank':
+            # sets the model input as already quantized
+            prepare_custom_config["input_quantized_idxs"] = [0]
+
+    return prepare_custom_config
 
 def prepare_quantized_model(model, qconfig_mapping, example_inputs, is_qat):
     """Prepare model for quantization with FX graph mode.
@@ -455,17 +472,8 @@ def prepare_quantized_model(model, qconfig_mapping, example_inputs, is_qat):
     # Apply quantization only to supported layers
     qconfig_mapping = apply_quantization_to_supported_layers(qconfig_mapping, model)
 
-    # Treat the model input as already in the quantized domain (scale=1, zero_point=0), so
-    # no observer/quantize node is inserted on the raw sensor input. The first layer's weight
-    # and output activation are still quantized normally via its own qconfig.
-    prepare_custom_config = {}
-
-    try:
-        target_module = model.model._modules['0']
-        if type(target_module).__name__ == 'FilterBank':
-            prepare_custom_config = {"input_quantized_idxs": [0]}
-    except (AttributeError, KeyError):
-        pass
+    # No quantization for the inputs, if it is a FilterBank model
+    prepare_custom_config = get_prepare_custom_config(model)
 
     # Prepare model for quantization
     if is_qat:
