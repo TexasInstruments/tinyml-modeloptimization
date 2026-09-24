@@ -22,6 +22,13 @@ dependencies = [
 	"onnxsim==0.4.36",
 	"colorama==0.4.6",
 	"torch==2.11.0",
+	# "numpy==2.2.6",
+	# "onnxsim==0.4.36",
+	# "onnx==1.19.1",
+	# "onnxruntime==1.23.2",
+	# "colorama==0.4.6",
+	# "torch==2.11.0",
+	"soundfile==0.14.0",
 ]
 [[project.authors]]
 name = "Adithya Thonse"
