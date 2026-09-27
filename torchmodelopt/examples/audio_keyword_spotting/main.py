@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import confusion_matrix
 import torch.nn.functional as F
-
+import soundfile as sf
 
 from torchmetrics.classification import Accuracy
 from tqdm import tqdm
@@ -163,7 +163,10 @@ def prepare_background_data(bg_path, BACKGROUND_NOISE_DIR_NAME):
         wav_path = os.path.join(background_dir, wav)
         if not wav_path.endswith((".wav", ".WAV")):
             continue
-        audio, _ = torchaudio.load(wav_path)
+        # audio, _ = torchaudio.load(wav_path)
+        audio, _ = sf.read(wav_path, dtype="float32", always_2d=True)
+        audio = torch.from_numpy(audio.T.copy())
+        # background_data.append(audio.squeeze())
         background_data.append(audio.squeeze())
     if not background_data:
         raise Exception('No background wav files were found in ' + background_dir)
@@ -617,12 +620,14 @@ class SavedTensorDataset(Dataset):
                 label_dir = os.path.join(dataset_dir, label)
                 if os.path.isdir(label_dir):
                     for tensor_file in os.listdir(label_dir):
-                        audio_tensor = torch.load(os.path.join(label_dir, tensor_file), weights_only=True)
+                        file_path = os.path.join(label_dir, tensor_file)
+                        audio, _ = sf.read(file_path, dtype="float32", always_2d=True)
+                        audio_tensor = torch.from_numpy(audio.T.copy())
                         self.tensors.append(audio_tensor)
                         self.labels.append(label)
                         self.class_count[self.encode_labels[label]] += 1
                         pbar.update(1)
-                        self.filenames.append(os.path.join(label_dir, tensor_file))  # Store full path to file
+                        self.filenames.append(file_path)  # Store full path to file
         self.labels = [self.encode_labels[label] for label in self.labels]
         
         self.class_weights = self.class_count.sum().item() / (12 * self.class_count)
