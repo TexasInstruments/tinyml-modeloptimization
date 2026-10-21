@@ -35,7 +35,6 @@ import torch.ao.quantization.quantize_fx as quantize_fx
 from torch.ao.quantization import QConfigMapping
 from torch.autograd import grad
 from logging import getLogger
-from tabulate import tabulate
 
 logger = getLogger("root.main.auto_quantization")
 
@@ -507,8 +506,10 @@ def run_auto_quantization(model, qconfig_dict, qconfig_mapping, get_default_qcon
             params = module_params[layer_name]
             pct = 100.0 * params / total_params if total_params > 0 else 0.0
             rows.append([f"{layer_name} ({layer_type})", p, params, f"{pct:.2f}%"])
-    logger.info("Hessian-based precision assignment (greedy bit budget):\n{}".format(
-        tabulate(rows, headers=["Layer (Type)", "Assigned bitwidth", "Params", "% of Total Params"], tablefmt="grid")))
+    header = "Layer (Type) | Assigned bitwidth | Params | % of Total Params"
+    separator = "-" * len(header)
+    table_str = "\n".join([header, separator] + [" | ".join(str(c) for c in row) for row in rows])
+    logger.info("Hessian-based precision assignment (greedy bit budget):\n" + table_str)
     bw_qconfig_dict = {
         'weight': {**qconfig_dict.get('weight', {}), 'bitwidth': final_bw},
         'activation': {**qconfig_dict.get('activation', {}), 'bitwidth': final_bw},
